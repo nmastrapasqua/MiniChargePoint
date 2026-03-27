@@ -1,0 +1,10 @@
+{
+    "centralSystemUrl": "ws://localhost:8180/steve/websocket/CentralSystemService",
+    "chargePointId": "MiniCP001",
+    "socketPath": "/tmp/minichargepoint.sock",
+    "httpPort": 8080,
+    "meterInterval": 10,
+    "defaultIdTag": "TESTIDTAG1",
+    "logLevel": "information",
+    "logFile": "minichargepoint.log"
+}
