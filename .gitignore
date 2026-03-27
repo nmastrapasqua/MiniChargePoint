@@ -3,6 +3,9 @@ build/
 
 # Editor / IDE
 .vscode/
+.settings/
+.project
+.cproject
 *.swp
 *.swo
 *~
@@ -16,3 +19,4 @@ Thumbs.db
 
 # Unix domain socket
 *.sock
+
