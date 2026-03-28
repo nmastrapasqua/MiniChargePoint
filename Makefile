@@ -57,8 +57,11 @@ APP_BIN  := $(BUILDDIR)/charge_point_app
 
 all: $(FW_BIN) $(APP_BIN)
 
-# firmware_simulator: sorgenti firmware + common
-$(FW_BIN): $(FW_OBJS) $(COMMON_OBJS)
+# Oggetti app condivisi con il firmware (ConfigManager usato da entrambi i processi)
+FW_SHARED_APP_OBJS := $(OBJDIR)/app/ConfigManager.o
+
+# firmware_simulator: sorgenti firmware + common + ConfigManager
+$(FW_BIN): $(FW_OBJS) $(COMMON_OBJS) $(FW_SHARED_APP_OBJS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(POCO_LIBS)
 
