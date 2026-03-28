@@ -22,6 +22,7 @@ static void testRoundTrip()
     original.defaultIdTag     = "ROUNDTRIPTAG";
     original.logLevel         = "debug";
     original.logFile          = "roundtrip.log";
+    original.protocol         = "ocpp1.6j";
 
     std::string json = ConfigManager::toJson(original);
     std::string path = writeToTempFile(json);
@@ -35,6 +36,7 @@ static void testRoundTrip()
     ASSERT_EQ(original.defaultIdTag,     loaded.defaultIdTag);
     ASSERT_EQ(original.logLevel,         loaded.logLevel);
     ASSERT_EQ(original.logFile,          loaded.logFile);
+    ASSERT_EQ(original.protocol,         loaded.protocol);
 }
 
 // ============================================================================
@@ -115,6 +117,7 @@ static void testDefaultsOnMissingFile()
     ASSERT_EQ(def.defaultIdTag,     cfg.defaultIdTag);
     ASSERT_EQ(def.logLevel,         cfg.logLevel);
     ASSERT_EQ(def.logFile,          cfg.logFile);
+    ASSERT_EQ(def.protocol,         cfg.protocol);
 }
 
 // ============================================================================
@@ -132,7 +135,8 @@ static void testAllFieldsParsed()
         "  \"meterInterval\": 60,\n"
         "  \"defaultIdTag\": \"CUSTOMTAG\",\n"
         "  \"logLevel\": \"debug\",\n"
-        "  \"logFile\": \"custom.log\"\n"
+        "  \"logFile\": \"custom.log\",\n"
+        "  \"protocol\": \"ocpp1.6j\"\n"
         "}";
 
     std::string path = writeToTempFile(json);
@@ -146,6 +150,7 @@ static void testAllFieldsParsed()
     ASSERT_EQ(std::string("CUSTOMTAG"),             cfg.defaultIdTag);
     ASSERT_EQ(std::string("debug"),                 cfg.logLevel);
     ASSERT_EQ(std::string("custom.log"),            cfg.logFile);
+    ASSERT_EQ(std::string("ocpp1.6j"),              cfg.protocol);
 }
 
 // ============================================================================

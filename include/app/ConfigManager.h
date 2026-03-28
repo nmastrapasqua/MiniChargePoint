@@ -25,6 +25,7 @@ public:
         std::string defaultIdTag     = "TESTIDTAG1";
         std::string logLevel         = "information";
         std::string logFile          = "minichargepoint.log";
+        std::string protocol         = "ocpp1.6j";  // protocollo di comunicazione
     };
 
     /**

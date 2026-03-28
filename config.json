@@ -6,5 +6,6 @@
     "meterInterval": 10,
     "defaultIdTag": "TESTIDTAG1",
     "logLevel": "information",
-    "logFile": "minichargepoint.log"
+    "logFile": "minichargepoint.log",
+    "protocol": "ocpp1.6j"
 }
