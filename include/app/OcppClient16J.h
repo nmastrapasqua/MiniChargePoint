@@ -109,9 +109,12 @@ private:
     // Heartbeat timer
     Poco::Timer _heartbeatTimer;
     int _heartbeatInterval;  // seconds, from BootNotification.conf
+    bool _heartbeatTimerStarted;
 
     // Reconnect timer
     Poco::Timer _reconnectTimer;
+    bool _reconnectNeeded;
+    bool _reconnectTimerStarted;
 
     // Unique ID counter
     std::atomic<int> _uniqueIdCounter;

@@ -89,20 +89,22 @@
     elFwStatus.textContent = fwConn ? "Connesso" : "Disconnesso";
     elFwStatus.className   = "badge " + (fwConn ? "connected" : "disconnected");
 
-    updateButtons(state, !!s.firmwareConnected);
+    updateButtons(state, !!s.firmwareConnected, csConn);
   }
 
   /**
    * Abilita/disabilita i pulsanti in base allo stato del connettore.
-   * Se il firmware è disconnesso, tutti i pulsanti sono disabilitati.
+   * Firmware disconnesso → tutti disabilitati.
+   * Central System disconnesso → Start Charge e Stop Charge disabilitati.
    *
    * Available:  Plug In, HW Fault, Tamper
-   * Preparing:  Plug Out, Start Charge, HW Fault, Tamper
-   * Charging:   Stop Charge, HW Fault, Tamper
+   * Preparing:  Plug Out, Start Charge*, HW Fault, Tamper
+   * Charging:   Stop Charge*, HW Fault, Tamper
    * Finishing:  Plug Out
    * Faulted:    Clear Error
+   * (* = richiede Central System connesso)
    */
-  function updateButtons(state, fwConnected) {
+  function updateButtons(state, fwConnected, csConnected) {
     var all = [btnPlugIn, btnPlugOut, btnStartCharge, btnStopCharge,
                btnErrHw, btnErrTamper, btnClearErr, inputIdTag];
     for (var i = 0; i < all.length; i++) all[i].disabled = true;
@@ -117,13 +119,17 @@
         break;
       case "Preparing":
         btnPlugOut.disabled = false;
-        btnStartCharge.disabled = false;
-        inputIdTag.disabled = false;
+        if (csConnected) {
+          btnStartCharge.disabled = false;
+          inputIdTag.disabled = false;
+        }
         btnErrHw.disabled = false;
         btnErrTamper.disabled = false;
         break;
       case "Charging":
-        btnStopCharge.disabled = false;
+        if (csConnected) {
+          btnStopCharge.disabled = false;
+        }
         btnErrHw.disabled = false;
         btnErrTamper.disabled = false;
         break;

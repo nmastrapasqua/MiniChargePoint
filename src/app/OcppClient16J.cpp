@@ -54,7 +54,10 @@ OcppClient16J::OcppClient16J(const std::string& centralSystemUrl,
     , _running(false)
     , _heartbeatTimer(0, 0)
     , _heartbeatInterval(0)
+    , _heartbeatTimerStarted(false)
     , _reconnectTimer(0, 0)
+    , _reconnectNeeded(false)
+    , _reconnectTimerStarted(false)
     , _uniqueIdCounter(1)
     , _receiveRunnable(*this)
 {
@@ -143,6 +146,7 @@ void OcppClient16J::disconnect()
 {
     _running = false;
     _connected = false;
+    _reconnectNeeded = false;
 
     stopHeartbeat();
 
@@ -619,7 +623,6 @@ void OcppClient16J::onHeartbeatTimer(Poco::Timer& /*timer*/)
 
 void OcppClient16J::startHeartbeat(int intervalSeconds)
 {
-    stopHeartbeat();
     if (intervalSeconds <= 0) return;
 
     _heartbeatInterval = intervalSeconds;
@@ -628,18 +631,22 @@ void OcppClient16J::startHeartbeat(int intervalSeconds)
     Logger& logger = Logger::get("OcppClient");
     logger.debug("Starting Heartbeat timer: %d s", intervalSeconds);
 
-    _heartbeatTimer.setStartInterval(intervalMs);
-    _heartbeatTimer.setPeriodicInterval(intervalMs);
-
-    Poco::TimerCallback<OcppClient16J> cb(*this, &OcppClient16J::onHeartbeatTimer);
-    _heartbeatTimer.start(cb);
+    if (!_heartbeatTimerStarted) {
+        _heartbeatTimer.setStartInterval(intervalMs);
+        _heartbeatTimer.setPeriodicInterval(intervalMs);
+        Poco::TimerCallback<OcppClient16J> cb(*this, &OcppClient16J::onHeartbeatTimer);
+        _heartbeatTimer.start(cb);
+        _heartbeatTimerStarted = true;
+    } else {
+        _heartbeatTimer.restart(intervalMs);
+    }
 }
 
 void OcppClient16J::stopHeartbeat()
 {
-    try {
-        _heartbeatTimer.restart(0);
-    } catch (...) {}
+    if (_heartbeatTimerStarted) {
+        try { _heartbeatTimer.restart(0); } catch (...) {}
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +656,7 @@ void OcppClient16J::stopHeartbeat()
 void OcppClient16J::onReconnectTimer(Poco::Timer& /*timer*/)
 {
     if (!_running) return;
+    if (!_reconnectNeeded) return;
     if (_connected) return;
 
     Logger& logger = Logger::get("OcppClient");
@@ -681,6 +689,7 @@ void OcppClient16J::onReconnectTimer(Poco::Timer& /*timer*/)
         }
 
         _connected = true;
+        _reconnectNeeded = false;
         logger.information("Reconnected to Central_System");
         notifyConnectionStatus(true);
 
@@ -702,17 +711,21 @@ void OcppClient16J::startReconnect()
 {
     if (!_running) return;
 
-    Logger& logger = Logger::get("OcppClient");
-    logger.warning("Scheduling reconnection in 10 seconds");
+    _reconnectNeeded = true;
 
-    try {
-        _reconnectTimer.setStartInterval(10000);
-        _reconnectTimer.setPeriodicInterval(10000);
+    if (!_reconnectTimerStarted) {
+        Logger& logger = Logger::get("OcppClient");
+        logger.warning("Scheduling reconnection in 10 seconds");
 
-        Poco::TimerCallback<OcppClient16J> cb(*this, &OcppClient16J::onReconnectTimer);
-        _reconnectTimer.start(cb);
-    } catch (Poco::Exception& e) {
-        logger.error("Failed to start reconnect timer: %s", e.displayText());
+        try {
+            _reconnectTimer.setStartInterval(10000);
+            _reconnectTimer.setPeriodicInterval(10000);
+            Poco::TimerCallback<OcppClient16J> cb(*this, &OcppClient16J::onReconnectTimer);
+            _reconnectTimer.start(cb);
+            _reconnectTimerStarted = true;
+        } catch (Poco::Exception& e) {
+            logger.error("Failed to start reconnect timer: %s", e.displayText());
+        }
     }
 }
 
