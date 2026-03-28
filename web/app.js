@@ -2,8 +2,9 @@
  * app.js — MiniChargePoint Web Interface
  *
  * Connessione WebSocket all'Application_Layer, invio comandi JSON,
- * ricezione e visualizzazione aggiornamenti di stato e log eventi.
+ * ricezione e visualizzazione aggiornamenti di stato.
  * Riconnessione automatica ogni 3 secondi se la connessione viene persa.
+ * I pulsanti vengono abilitati/disabilitati in base allo stato del connettore.
  *
  * Requisiti validati: 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
  */
@@ -18,12 +19,17 @@
   var elIdTag          = document.getElementById("id-tag");
   var elCsStatus       = document.getElementById("cs-status");
   var elFwStatus       = document.getElementById("fw-status");
-  var elLog            = document.getElementById("log-container");
   var inputIdTag       = document.getElementById("input-idtag");
 
-  var MAX_LOG_ENTRIES = 200;
-  var RECONNECT_MS   = 3000;
+  var btnPlugIn      = document.getElementById("btn-plug-in");
+  var btnPlugOut     = document.getElementById("btn-plug-out");
+  var btnStartCharge = document.getElementById("btn-start-charge");
+  var btnStopCharge  = document.getElementById("btn-stop-charge");
+  var btnErrHw       = document.getElementById("btn-err-hw");
+  var btnErrTamper   = document.getElementById("btn-err-tamper");
+  var btnClearErr    = document.getElementById("btn-clear-err");
 
+  var RECONNECT_MS = 3000;
   var ws = null;
   var reconnectTimer = null;
 
@@ -31,34 +37,17 @@
   function connect() {
     var protocol = location.protocol === "https:" ? "wss:" : "ws:";
     var url = protocol + "//" + location.host + "/";
-
     ws = new WebSocket(url);
 
-    ws.onopen = function () {
-      setWsStatus(true);
-      addLog("information", "WebSocket connesso");
-    };
-
-    ws.onclose = function () {
-      setWsStatus(false);
-      scheduleReconnect();
-    };
-
-    ws.onerror = function () {
-      setWsStatus(false);
-    };
+    ws.onopen = function () { setWsStatus(true); };
+    ws.onclose = function () { setWsStatus(false); scheduleReconnect(); };
+    ws.onerror = function () { setWsStatus(false); };
 
     ws.onmessage = function (evt) {
       try {
         var msg = JSON.parse(evt.data);
-        if (msg.type === "status_update") {
-          applyStatus(msg);
-        } else if (msg.type === "log_event") {
-          addLog(msg.level, msg.message, msg.timestamp);
-        }
-      } catch (e) {
-        // ignore malformed messages
-      }
+        if (msg.type === "status_update") applyStatus(msg);
+      } catch (e) {}
     };
   }
 
@@ -83,84 +72,95 @@
   }
 
   function applyStatus(s) {
-    // Connector state
     var state = s.connectorState || "Available";
     elConnectorState.textContent = state;
     elConnectorState.className   = "state-badge " + state.toLowerCase();
 
-    // Meter
     elMeterValue.textContent = s.meterValue != null ? s.meterValue : 0;
 
-    // Session
     elTransactionId.textContent = (s.transactionId && s.transactionId > 0) ? s.transactionId : "—";
     elIdTag.textContent         = s.idTag || "—";
 
-    // Central System connection
     var csConn = !!s.centralSystemConnected;
     elCsStatus.textContent = csConn ? "Connesso" : "Disconnesso";
     elCsStatus.className   = "badge " + (csConn ? "connected" : "disconnected");
 
-    // Firmware connection
     var fwConn = !!s.firmwareConnected;
     elFwStatus.textContent = fwConn ? "Connesso" : "Disconnesso";
     elFwStatus.className   = "badge " + (fwConn ? "connected" : "disconnected");
+
+    updateButtons(state, !!s.firmwareConnected);
   }
 
-  function addLog(level, message, timestamp) {
-    var time = timestamp ? formatTime(timestamp) : formatTime(new Date().toISOString());
-    var entry = document.createElement("div");
-    entry.className = "log-entry";
-    entry.innerHTML =
-      '<span class="log-time">' + escapeHtml(time) + "</span>" +
-      '<span class="log-level ' + escapeHtml(level) + '">' + escapeHtml(level) + "</span>" +
-      "<span>" + escapeHtml(message) + "</span>";
-    elLog.prepend(entry);
+  /**
+   * Abilita/disabilita i pulsanti in base allo stato del connettore.
+   * Se il firmware è disconnesso, tutti i pulsanti sono disabilitati.
+   *
+   * Available:  Plug In, HW Fault, Tamper
+   * Preparing:  Plug Out, Start Charge, HW Fault, Tamper
+   * Charging:   Stop Charge, HW Fault, Tamper
+   * Finishing:  Plug Out
+   * Faulted:    Clear Error
+   */
+  function updateButtons(state, fwConnected) {
+    var all = [btnPlugIn, btnPlugOut, btnStartCharge, btnStopCharge,
+               btnErrHw, btnErrTamper, btnClearErr, inputIdTag];
+    for (var i = 0; i < all.length; i++) all[i].disabled = true;
 
-    // Trim old entries
-    while (elLog.children.length > MAX_LOG_ENTRIES) {
-      elLog.removeChild(elLog.lastChild);
+    if (!fwConnected) return;
+
+    switch (state) {
+      case "Available":
+        btnPlugIn.disabled = false;
+        btnErrHw.disabled = false;
+        btnErrTamper.disabled = false;
+        break;
+      case "Preparing":
+        btnPlugOut.disabled = false;
+        btnStartCharge.disabled = false;
+        inputIdTag.disabled = false;
+        btnErrHw.disabled = false;
+        btnErrTamper.disabled = false;
+        break;
+      case "Charging":
+        btnStopCharge.disabled = false;
+        btnErrHw.disabled = false;
+        btnErrTamper.disabled = false;
+        break;
+      case "Finishing":
+        btnPlugOut.disabled = false;
+        break;
+      case "Faulted":
+        btnClearErr.disabled = false;
+        break;
     }
-  }
-
-  function formatTime(iso) {
-    try {
-      var d = new Date(iso);
-      return d.toLocaleTimeString();
-    } catch (e) {
-      return iso;
-    }
-  }
-
-  function escapeHtml(str) {
-    var div = document.createElement("div");
-    div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
   }
 
   // --- Button handlers ---
-  document.getElementById("btn-plug-in").addEventListener("click", function () {
+  btnPlugIn.addEventListener("click", function () {
     send({ command: "plug_in" });
   });
-  document.getElementById("btn-plug-out").addEventListener("click", function () {
+  btnPlugOut.addEventListener("click", function () {
     send({ command: "plug_out" });
   });
-  document.getElementById("btn-start-charge").addEventListener("click", function () {
+  btnStartCharge.addEventListener("click", function () {
     var tag = inputIdTag.value.trim() || "TESTIDTAG1";
     send({ command: "start_charge", idTag: tag });
   });
-  document.getElementById("btn-stop-charge").addEventListener("click", function () {
+  btnStopCharge.addEventListener("click", function () {
     send({ command: "stop_charge" });
   });
-  document.getElementById("btn-err-hw").addEventListener("click", function () {
+  btnErrHw.addEventListener("click", function () {
     send({ command: "trigger_error", errorType: "HardwareFault" });
   });
-  document.getElementById("btn-err-tamper").addEventListener("click", function () {
+  btnErrTamper.addEventListener("click", function () {
     send({ command: "trigger_error", errorType: "TamperDetection" });
   });
-  document.getElementById("btn-clear-err").addEventListener("click", function () {
+  btnClearErr.addEventListener("click", function () {
     send({ command: "clear_error" });
   });
 
   // --- Init ---
+  updateButtons("Available");
   connect();
 })();

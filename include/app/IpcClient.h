@@ -68,7 +68,8 @@ private:
     Poco::Net::StreamSocket _socket;
     bool _connected;
     bool _running;
-    bool _reconnectTimerActive;
+    bool _reconnectNeeded;
+    bool _reconnectTimerStarted;
     MessageCallback _messageCallback;
     ConnectionStatusCallback _connectionStatusCallback;
     mutable Poco::Mutex _mutex;

@@ -576,6 +576,8 @@ void OcppClient16J::handleIncomingCall(const std::string& uniqueId,
             cb = _remoteCommandCallback;
         }
         if (cb) {
+            // Piccolo delay per permettere a SteVe di registrare il CALL come pendente
+            Poco::Thread::sleep(100);
             try {
                 cb(action, payload, uniqueId);
             } catch (Poco::Exception& e) {
@@ -687,6 +689,9 @@ void OcppClient16J::onReconnectTimer(Poco::Timer& /*timer*/)
             try { _receiveThread.join(2000); } catch (...) {}
         }
         _receiveThread.start(_receiveRunnable);
+
+        // Re-inviare BootNotification dopo riconnessione
+        sendBootNotification("MiniChargePoint", "MiniCP");
 
     } catch (Poco::Exception& e) {
         logger.warning("Reconnection failed: %s", e.displayText());

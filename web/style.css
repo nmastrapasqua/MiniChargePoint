@@ -121,6 +121,12 @@ main { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
   transition: background .15s, transform .1s;
 }
 .btn:active { transform: scale(.97); }
+.btn:disabled {
+  opacity: .35; cursor: not-allowed; transform: none;
+}
+.charge-group input:disabled {
+  opacity: .35; cursor: not-allowed;
+}
 .btn-primary   { background: var(--primary); color: #fff; }
 .btn-primary:hover { background: var(--primary-hover); }
 .btn-secondary { background: var(--outline); color: #fff; }
@@ -133,30 +139,6 @@ main { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
 .btn-danger:hover { background: var(--danger-hover); }
 .btn-outline   { background: transparent; color: var(--outline); border: 2px solid var(--outline); }
 .btn-outline:hover { background: var(--outline); color: #fff; }
-
-/* Log section */
-.log-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.25rem;
-  box-shadow: var(--shadow);
-}
-.log-section h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: .75rem; }
-
-#log-container {
-  max-height: 260px; overflow-y: auto;
-  font-family: "Cascadia Code", "Fira Code", monospace;
-  font-size: .8rem; line-height: 1.6;
-}
-.log-entry { padding: .15rem 0; border-bottom: 1px solid var(--border); }
-.log-entry:last-child { border-bottom: none; }
-.log-time  { color: var(--text-muted); margin-right: .5rem; }
-.log-level { font-weight: 700; margin-right: .5rem; text-transform: uppercase; }
-.log-level.error       { color: var(--danger); }
-.log-level.warning     { color: var(--warning); }
-.log-level.information { color: var(--primary); }
-.log-level.debug       { color: var(--text-muted); }
 
 /* Responsive */
 @media (max-width: 600px) {

@@ -116,6 +116,8 @@ int main(int argc, char* argv[])
             } else if (newState == ConnectorSimulator::State::Available) {
                 meter.stop();
                 meter.reset();
+            } else if (newState == ConnectorSimulator::State::Faulted) {
+                meter.stop();
             }
 
             // Invia notifica IPC

@@ -49,7 +49,8 @@ IpcClient::IpcClient(const std::string& socketPath)
     : _socketPath(socketPath)
     , _connected(false)
     , _running(false)
-    , _reconnectTimerActive(false)
+    , _reconnectNeeded(false)
+    , _reconnectTimerStarted(false)
     , _readRunnable(*this)
     , _reconnectTimer(0, 0)
 {
@@ -90,7 +91,7 @@ void IpcClient::disconnect()
     Logger& logger = Logger::get("IpcClient");
     logger.information("Disconnecting IPC client");
 
-    stopReconnectTimer();
+    _reconnectNeeded = false;
 
     {
         Poco::Mutex::ScopedLock lock(_mutex);
@@ -184,34 +185,29 @@ void IpcClient::scheduleReconnect()
     }
     if (!running) return;
 
-    // Se il timer è già attivo, non fare nulla
-    if (_reconnectTimerActive) return;
+    // Segnala che la riconnessione è necessaria
+    _reconnectNeeded = true;
 
-    Logger& logger = Logger::get("IpcClient");
-    logger.warning("Scheduling IPC reconnection every 5 seconds");
+    // Avvia il timer solo la prima volta
+    if (!_reconnectTimerStarted) {
+        Logger& logger = Logger::get("IpcClient");
+        logger.warning("Scheduling IPC reconnection every 5 seconds");
 
-    try {
-        _reconnectTimer.setStartInterval(5000);
-        _reconnectTimer.setPeriodicInterval(5000);
-        Poco::TimerCallback<IpcClient> cb(*this, &IpcClient::onReconnect);
-        _reconnectTimer.start(cb);
-        _reconnectTimerActive = true;
-    } catch (Poco::Exception& e) {
-        logger.error("Failed to start reconnect timer: %s", e.displayText());
-        // Fallback: prova con restart
         try {
-            _reconnectTimer.restart(5000);
-            _reconnectTimerActive = true;
-        } catch (...) {}
+            _reconnectTimer.setStartInterval(5000);
+            _reconnectTimer.setPeriodicInterval(5000);
+            Poco::TimerCallback<IpcClient> cb(*this, &IpcClient::onReconnect);
+            _reconnectTimer.start(cb);
+            _reconnectTimerStarted = true;
+        } catch (Poco::Exception& e) {
+            logger.error("Failed to start reconnect timer: %s", e.displayText());
+        }
     }
 }
 
 void IpcClient::stopReconnectTimer()
 {
-    if (_reconnectTimerActive) {
-        try { _reconnectTimer.restart(0); } catch (...) {}
-        _reconnectTimerActive = false;
-    }
+    _reconnectNeeded = false;
 }
 
 void IpcClient::notifyConnectionStatus(bool connected)
@@ -226,6 +222,8 @@ void IpcClient::notifyConnectionStatus(bool connected)
 
 void IpcClient::onReconnect(Poco::Timer& /*timer*/)
 {
+    if (!_reconnectNeeded) return;
+
     bool running;
     bool connected;
     {
@@ -239,7 +237,7 @@ void IpcClient::onReconnect(Poco::Timer& /*timer*/)
     logger.warning("Attempting IPC reconnection to %s", _socketPath);
 
     if (tryConnect()) {
-        stopReconnectTimer();
+        _reconnectNeeded = false;
         startReadThread();
     }
 }
