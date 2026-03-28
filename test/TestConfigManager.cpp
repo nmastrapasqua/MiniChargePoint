@@ -1,77 +1,11 @@
 /**
- * TestConfigManager — Unit test per ConfigManager (senza framework esterno).
- *
- * Harness minimale basato su assert + macro di utilità.
- * Ogni test è una funzione void; il fallimento è segnalato da assert/throw.
+ * TestConfigManager — Unit test per ConfigManager.
  *
  * Proprietà validate: P8 (round-trip config), P9 (rifiuto config non valida)
  * Requisiti: 8.1, 8.2, 8.3, 8.4, 11.1, 11.2
  */
+#include "TestHarness.h"
 #include "app/ConfigManager.h"
-
-#include <Poco/TemporaryFile.h>
-#include <cassert>
-#include <fstream>
-#include <iostream>
-#include <string>
-#include <functional>
-#include <vector>
-
-// ---------------------------------------------------------------------------
-// Harness minimale
-// ---------------------------------------------------------------------------
-static int g_passed = 0;
-static int g_failed = 0;
-
-static void runTest(const std::string& name, std::function<void()> fn)
-{
-    try {
-        fn();
-        std::cout << "  [PASS] " << name << "\n";
-        ++g_passed;
-    } catch (const std::exception& ex) {
-        std::cerr << "  [FAIL] " << name << " — " << ex.what() << "\n";
-        ++g_failed;
-    } catch (...) {
-        std::cerr << "  [FAIL] " << name << " — unknown exception\n";
-        ++g_failed;
-    }
-}
-
-#define ASSERT_EQ(a, b) \
-    do { if ((a) != (b)) throw std::runtime_error( \
-        std::string(#a " != " #b " → \"") + std::to_string_helper(a) + \
-        "\" vs \"" + std::to_string_helper(b) + "\""); } while(0)
-
-// Overload helpers per ASSERT_EQ
-static std::string std_to_string_helper(const std::string& s) { return s; }
-static std::string std_to_string_helper(int v) { return std::to_string(v); }
-
-// Ridefinisco la macro usando gli helper corretti
-#undef ASSERT_EQ
-#define ASSERT_EQ(a, b) \
-    do { if ((a) != (b)) throw std::runtime_error( \
-        std::string(#a " != " #b " → \"") + std_to_string_helper(a) + \
-        "\" vs \"" + std_to_string_helper(b) + "\""); } while(0)
-
-#define ASSERT_TRUE(expr) \
-    do { if (!(expr)) throw std::runtime_error(std::string("assertion failed: " #expr)); } while(0)
-
-#define ASSERT_FALSE(expr) \
-    do { if ((expr)) throw std::runtime_error(std::string("expected false: " #expr)); } while(0)
-
-// Helper: scrive una stringa in un file temporaneo e restituisce il path
-static std::string writeToTempFile(const std::string& content)
-{
-    Poco::TemporaryFile tmpFile;
-    std::string path = tmpFile.path();
-    tmpFile.keepUntilExit();
-    {
-        std::ofstream ofs(path);
-        ofs << content;
-    }
-    return path;
-}
 
 // ============================================================================
 // Feature: mini-charge-point, Property 8: Round-trip configurazione JSON

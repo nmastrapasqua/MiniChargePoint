@@ -53,6 +53,7 @@ APP_BIN  := $(BUILDDIR)/charge_point_app
 # ---------------------------------------------------------------------------
 
 .PHONY: all clean test
+.SECONDARY: $(TEST_OBJS)
 
 all: $(FW_BIN) $(APP_BIN)
 

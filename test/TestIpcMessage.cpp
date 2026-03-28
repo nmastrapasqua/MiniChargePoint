@@ -1,58 +1,19 @@
 /**
- * TestIpcMessage — Unit test per i messaggi IPC (senza framework esterno).
- *
- * Harness minimale basato su assert + macro di utilità (stesso pattern di TestConfigManager).
- * Ogni test è una funzione void; il fallimento è segnalato da assert/throw.
+ * TestIpcMessage — Unit test per i messaggi IPC.
  *
  * Proprietà validata: P10 (round-trip trasporto IPC in formato JSON)
  * Requisiti: 1.4, 11.1
  */
+#include "TestHarness.h"
 #include "common/IpcMessage.h"
 
-#include <cassert>
-#include <iostream>
-#include <string>
-#include <functional>
 #include <vector>
-
-// ---------------------------------------------------------------------------
-// Harness minimale
-// ---------------------------------------------------------------------------
-static int g_passed = 0;
-static int g_failed = 0;
-
-static void runTest(const std::string& name, std::function<void()> fn)
-{
-    try {
-        fn();
-        std::cout << "  [PASS] " << name << "\n";
-        ++g_passed;
-    } catch (const std::exception& ex) {
-        std::cerr << "  [FAIL] " << name << " — " << ex.what() << "\n";
-        ++g_failed;
-    } catch (...) {
-        std::cerr << "  [FAIL] " << name << " — unknown exception\n";
-        ++g_failed;
-    }
-}
-
-static std::string std_to_string_helper(const std::string& s) { return s; }
-static std::string std_to_string_helper(int v) { return std::to_string(v); }
-
-#define ASSERT_EQ(a, b) \
-    do { if ((a) != (b)) throw std::runtime_error( \
-        std::string(#a " != " #b " → \"") + std_to_string_helper(a) + \
-        "\" vs \"" + std_to_string_helper(b) + "\""); } while(0)
-
-#define ASSERT_TRUE(expr) \
-    do { if (!(expr)) throw std::runtime_error(std::string("assertion failed: " #expr)); } while(0)
 
 // ============================================================================
 // Feature: mini-charge-point, Property 10: Trasporto IPC in formato JSON
 // Validates: Requirements 1.4, 11.1
 // ============================================================================
 
-// --- Round-trip: ConnectorStateMsg -------------------------------------------
 static void testRoundTripConnectorState()
 {
     IpcMessage::ConnectorStateMsg original;
@@ -66,7 +27,6 @@ static void testRoundTripConnectorState()
     ASSERT_EQ(original.timestamp, restored.timestamp);
 }
 
-// --- Round-trip: MeterValueMsg -----------------------------------------------
 static void testRoundTripMeterValue()
 {
     IpcMessage::MeterValueMsg original;
@@ -82,7 +42,6 @@ static void testRoundTripMeterValue()
     ASSERT_EQ(original.timestamp, restored.timestamp);
 }
 
-// --- Round-trip: ErrorMsg ----------------------------------------------------
 static void testRoundTripError()
 {
     IpcMessage::ErrorMsg original;
@@ -98,7 +57,6 @@ static void testRoundTripError()
     ASSERT_EQ(original.timestamp,   restored.timestamp);
 }
 
-// --- Round-trip: ErrorClearedMsg ---------------------------------------------
 static void testRoundTripErrorCleared()
 {
     IpcMessage::ErrorClearedMsg original;
@@ -110,7 +68,6 @@ static void testRoundTripErrorCleared()
     ASSERT_EQ(original.timestamp, restored.timestamp);
 }
 
-// --- Round-trip: CommandMsg (senza errorType) --------------------------------
 static void testRoundTripCommandNoErrorType()
 {
     IpcMessage::CommandMsg original;
@@ -124,7 +81,6 @@ static void testRoundTripCommandNoErrorType()
     ASSERT_EQ(original.errorType, restored.errorType);
 }
 
-// --- Round-trip: CommandMsg con errorType (trigger_error) --------------------
 static void testRoundTripCommandWithErrorType()
 {
     IpcMessage::CommandMsg original;
@@ -138,7 +94,6 @@ static void testRoundTripCommandWithErrorType()
     ASSERT_EQ(original.errorType, restored.errorType);
 }
 
-// --- getType() estrae correttamente il campo "type" --------------------------
 static void testGetTypeConnectorState()
 {
     IpcMessage::ConnectorStateMsg msg;
@@ -185,7 +140,6 @@ static void testGetTypeCommand()
     ASSERT_EQ(IpcMessage::TYPE_COMMAND, IpcMessage::getType(json));
 }
 
-// --- Round-trip per tutte le azioni di comando -------------------------------
 static void testAllCommandActions()
 {
     const std::vector<std::string> actions = {
