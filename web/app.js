@@ -17,6 +17,7 @@
   var elTransactionId  = document.getElementById("transaction-id");
   var elIdTag          = document.getElementById("id-tag");
   var elCsStatus       = document.getElementById("cs-status");
+  var elFwStatus       = document.getElementById("fw-status");
   var elLog            = document.getElementById("log-container");
   var inputIdTag       = document.getElementById("input-idtag");
 
@@ -98,6 +99,11 @@
     var csConn = !!s.centralSystemConnected;
     elCsStatus.textContent = csConn ? "Connesso" : "Disconnesso";
     elCsStatus.className   = "badge " + (csConn ? "connected" : "disconnected");
+
+    // Firmware connection
+    var fwConn = !!s.firmwareConnected;
+    elFwStatus.textContent = fwConn ? "Connesso" : "Disconnesso";
+    elFwStatus.className   = "badge " + (fwConn ? "connected" : "disconnected");
   }
 
   function addLog(level, message, timestamp) {

@@ -35,6 +35,7 @@ SessionManager::SessionManager(ProtocolAdapter& protocol, IIpcSender& ipc)
     _status.isCharging = false;
     _status.transactionId = -1;
     _status.centralSystemConnected = false;
+    _status.firmwareConnected = false;
     _status.lastError = "";
 }
 
@@ -157,6 +158,19 @@ void SessionManager::onCentralSystemConnectionChanged(bool connected)
     notifyStatusUpdate();
 }
 
+void SessionManager::onFirmwareConnectionChanged(bool connected)
+{
+    Logger& logger = Logger::get("SessionManager");
+    logger.information("Firmware IPC connection status: %s",
+                       std::string(connected ? "connected" : "disconnected"));
+
+    {
+        Poco::Mutex::ScopedLock lock(_mutex);
+        _status.firmwareConnected = connected;
+    }
+    notifyStatusUpdate();
+}
+
 // ---------------------------------------------------------------------------
 // Comandi remoti dal Central_System (Proprietà 13)
 // ---------------------------------------------------------------------------
@@ -191,8 +205,18 @@ void SessionManager::onRemoteCommand(const std::string& action,
             // Sequenza: plug_in → authorize → start_charge
             sendIpcCommand("plug_in");
 
-            // Avviare la ricarica con authorize (la sequenza continua in onProtocolResponse)
-            requestStartCharge(idTag);
+            // Avviare la sequenza Authorize direttamente (il connettore passerà
+            // a Preparing in modo asincrono, ma per il flusso remoto non serve
+            // attendere — il check stato è già stato fatto sopra)
+            int meterStart;
+            {
+                Poco::Mutex::ScopedLock lock(_mutex);
+                meterStart = _status.currentMeterValue;
+            }
+            _awaitingAuthorize = true;
+            _pendingIdTag = idTag;
+            _pendingMeterStart = meterStart;
+            _protocol.sendAuthorize(idTag);
         } else {
             // Connettore non disponibile → Rejected (Requisito 3.14)
             logger.warning("RemoteStartTransaction rejected: connector is %s", connState);
@@ -327,6 +351,16 @@ void SessionManager::requestStartCharge(const std::string& idTag)
 {
     Logger& logger = Logger::get("SessionManager");
     logger.information("Start charge requested with idTag: %s", idTag);
+
+    // Verificare che il connettore sia in stato Preparing prima di procedere
+    {
+        Poco::Mutex::ScopedLock lock(_mutex);
+        if (_status.connectorState != "Preparing") {
+            logger.warning("Cannot start charge: connector is %s (expected Preparing)",
+                           _status.connectorState);
+            return;
+        }
+    }
 
     // Proprietà 12: Authorize prima di StartTransaction
     int meterStart;

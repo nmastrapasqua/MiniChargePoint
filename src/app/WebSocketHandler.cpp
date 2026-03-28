@@ -1,14 +1,10 @@
 /**
- * WebSocketHandler — Implementazione della gestione WebSocket per i browser.
+ * WebSocketHandler — Implementazione.
  *
- * Ogni connessione WebSocket viene gestita in un handler dedicato che:
- *   1. Registra il socket nel broadcaster globale
- *   2. Invia lo stato corrente al browser appena connesso
- *   3. Riceve comandi JSON e li inoltra al SessionManager
- *   4. Rimuove il socket dal broadcaster alla disconnessione
- *
- * Il WebSocketBroadcaster è un singleton thread-safe che gestisce l'invio
- * broadcast degli aggiornamenti a tutti i browser connessi.
+ * Approccio: ogni client ha un sendMutex che protegge le operazioni di invio.
+ * Il receiveFrame non ha bisogno di lock perché è chiamato solo dal thread
+ * del handler. Il sendFrame è protetto dal sendMutex e può essere chiamato
+ * dal thread del broadcaster.
  *
  * Requisiti validati: 6.2, 6.4, 6.5
  */
@@ -45,26 +41,26 @@ void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
 
     try {
         WebSocket ws(request, response);
-        ws.setReceiveTimeout(Poco::Timespan(0, 500000)); // 500ms poll
+        ws.setReceiveTimeout(Poco::Timespan(1, 0)); // 1s poll
 
         logger.information("Browser WebSocket connected");
 
-        WebSocketBroadcaster::instance().addSocket(&ws);
+        auto entry = WebSocketBroadcaster::instance().addClient(&ws);
 
-        // Invia lo stato corrente al browser appena connesso
+        // Invia lo stato corrente
         WebSocketBroadcaster::instance().sendStatusUpdate(_sessionManager.getStatus());
 
-        // Loop di ricezione comandi
         char buffer[4096];
         int flags = 0;
         int n = 0;
 
-        while (true) {
+        while (entry->alive) {
             try {
                 n = ws.receiveFrame(buffer, sizeof(buffer), flags);
             } catch (Poco::TimeoutException&) {
-                // Timeout di polling, continua
                 continue;
+            } catch (Poco::Exception&) {
+                break;
             }
 
             if (n <= 0 || (flags & WebSocket::FRAME_OP_BITMASK) == WebSocket::FRAME_OP_CLOSE) {
@@ -77,7 +73,8 @@ void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
             }
         }
 
-        WebSocketBroadcaster::instance().removeSocket(&ws);
+        entry->alive = false;
+        WebSocketBroadcaster::instance().removeClient(entry);
         logger.information("Browser WebSocket disconnected");
 
     } catch (Poco::Net::WebSocketException& ex) {
@@ -109,7 +106,7 @@ void WebSocketHandler::processCommand(const std::string& json)
         } else if (command == "plug_out") {
             _sessionManager.requestPlugOut();
         } else if (command == "start_charge") {
-            std::string idTag = "TESTIDTAG1"; // default
+            std::string idTag = "TESTIDTAG1";
             if (obj->has("idTag")) {
                 idTag = obj->getValue<std::string>("idTag");
             }
@@ -117,7 +114,7 @@ void WebSocketHandler::processCommand(const std::string& json)
         } else if (command == "stop_charge") {
             _sessionManager.requestStopCharge();
         } else if (command == "trigger_error") {
-            std::string errorType = "HardwareFault"; // default
+            std::string errorType = "HardwareFault";
             if (obj->has("errorType")) {
                 errorType = obj->getValue<std::string>("errorType");
             }
@@ -134,7 +131,7 @@ void WebSocketHandler::processCommand(const std::string& json)
 }
 
 // ---------------------------------------------------------------------------
-// WebSocketBroadcaster (singleton)
+// WebSocketBroadcaster
 // ---------------------------------------------------------------------------
 
 WebSocketBroadcaster& WebSocketBroadcaster::instance()
@@ -143,18 +140,20 @@ WebSocketBroadcaster& WebSocketBroadcaster::instance()
     return inst;
 }
 
-void WebSocketBroadcaster::addSocket(Poco::Net::WebSocket* ws)
+std::shared_ptr<WsClientEntry> WebSocketBroadcaster::addClient(Poco::Net::WebSocket* ws)
 {
-    Poco::Mutex::ScopedLock lock(_mutex);
-    _sockets.push_back(ws);
+    auto entry = std::make_shared<WsClientEntry>(ws);
+    Poco::Mutex::ScopedLock lock(_clientsMutex);
+    _clients.push_back(entry);
+    return entry;
 }
 
-void WebSocketBroadcaster::removeSocket(Poco::Net::WebSocket* ws)
+void WebSocketBroadcaster::removeClient(const std::shared_ptr<WsClientEntry>& entry)
 {
-    Poco::Mutex::ScopedLock lock(_mutex);
-    _sockets.erase(
-        std::remove(_sockets.begin(), _sockets.end(), ws),
-        _sockets.end()
+    Poco::Mutex::ScopedLock lock(_clientsMutex);
+    _clients.erase(
+        std::remove(_clients.begin(), _clients.end(), entry),
+        _clients.end()
     );
 }
 
@@ -169,6 +168,7 @@ void WebSocketBroadcaster::sendStatusUpdate(const SessionManager::ChargePointSta
     obj.set("transactionId", status.transactionId);
     obj.set("idTag", status.idTag);
     obj.set("centralSystemConnected", status.centralSystemConnected);
+    obj.set("firmwareConnected", status.firmwareConnected);
     obj.set("lastError", status.lastError);
 
     std::string timestamp = Poco::DateTimeFormatter::format(
@@ -199,17 +199,22 @@ void WebSocketBroadcaster::sendLogEvent(const std::string& level,
 
 void WebSocketBroadcaster::broadcast(const std::string& json)
 {
-    Poco::Mutex::ScopedLock lock(_mutex);
+    // Snapshot dei client sotto lock
+    std::vector<std::shared_ptr<WsClientEntry>> snapshot;
+    {
+        Poco::Mutex::ScopedLock lock(_clientsMutex);
+        snapshot = _clients;
+    }
 
-    auto it = _sockets.begin();
-    while (it != _sockets.end()) {
+    // Invio senza tenere _clientsMutex
+    for (auto& entry : snapshot) {
+        if (!entry->alive) continue;
+        Poco::Mutex::ScopedLock sendLock(entry->sendMutex);
         try {
-            (*it)->sendFrame(json.data(), static_cast<int>(json.size()),
-                             WebSocket::FRAME_TEXT);
-            ++it;
+            entry->ws->sendFrame(json.data(), static_cast<int>(json.size()),
+                                 WebSocket::FRAME_TEXT);
         } catch (Poco::Exception&) {
-            // Client disconnesso, rimuovere
-            it = _sockets.erase(it);
+            entry->alive = false;
         }
     }
 }

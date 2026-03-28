@@ -407,11 +407,13 @@ void OcppClient16J::receiveLoop()
         try {
             int flags = 0;
             int n = 0;
+            Poco::Net::WebSocket* rawWs = nullptr;
             {
                 Poco::Mutex::ScopedLock lock(_wsMutex);
                 if (!_ws) break;
-                n = _ws->receiveFrame(buffer, sizeof(buffer), flags);
+                rawWs = _ws.get();
             }
+            n = rawWs->receiveFrame(buffer, sizeof(buffer), flags);
 
             if (n <= 0 || (flags & Poco::Net::WebSocket::FRAME_OP_CLOSE)) {
                 logger.warning("WebSocket connection closed by Central_System");

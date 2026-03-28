@@ -33,6 +33,7 @@ public:
         int transactionId;
         std::string idTag;
         bool centralSystemConnected;
+        bool firmwareConnected;
         std::string lastError;
     };
 
@@ -59,6 +60,9 @@ public:
 
     /// Chiamato quando lo stato della connessione con il Central_System cambia.
     void onCentralSystemConnectionChanged(bool connected);
+
+    /// Chiamato quando lo stato della connessione IPC con il Firmware_Layer cambia.
+    void onFirmwareConnectionChanged(bool connected);
 
     // --- Gestione comandi remoti dal Central_System ---
 

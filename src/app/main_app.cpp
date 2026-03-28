@@ -153,6 +153,12 @@ int main(int argc, char* argv[])
             sessionManager.onCentralSystemConnectionChanged(connected);
         });
 
+    // --- Callback: stato connessione IPC Firmware → SessionManager ---
+    ipcClient.setConnectionStatusCallback(
+        [&](bool connected) {
+            sessionManager.onFirmwareConnectionChanged(connected);
+        });
+
     // --- Callback: aggiornamenti stato SessionManager → WebSocket browser ---
     sessionManager.setStatusCallback(
         [&](const SessionManager::ChargePointStatus& status) {

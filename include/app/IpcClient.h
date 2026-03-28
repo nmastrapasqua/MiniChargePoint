@@ -57,12 +57,20 @@ public:
     /// Imposta la callback per i messaggi ricevuti.
     void setMessageCallback(MessageCallback cb);
 
+    /// Callback invocata quando lo stato della connessione IPC cambia.
+    using ConnectionStatusCallback = std::function<void(bool connected)>;
+
+    /// Imposta la callback per il cambio stato connessione.
+    void setConnectionStatusCallback(ConnectionStatusCallback cb);
+
 private:
     std::string _socketPath;
     Poco::Net::StreamSocket _socket;
     bool _connected;
     bool _running;
+    bool _reconnectTimerActive;
     MessageCallback _messageCallback;
+    ConnectionStatusCallback _connectionStatusCallback;
     mutable Poco::Mutex _mutex;
 
     // --- Thread lettura ---
@@ -97,6 +105,15 @@ private:
 
     /// Ferma il thread di lettura.
     void stopReadThread();
+
+    /// Avvia il timer di riconnessione (ogni 5 secondi), se non già attivo.
+    void scheduleReconnect();
+
+    /// Ferma il timer di riconnessione.
+    void stopReconnectTimer();
+
+    /// Notifica il cambio stato connessione ai listener.
+    void notifyConnectionStatus(bool connected);
 };
 
 #endif // IPCCLIENT_H
