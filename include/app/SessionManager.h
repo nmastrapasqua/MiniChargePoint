@@ -57,6 +57,9 @@ public:
     /// Chiamato quando il Firmware_Layer notifica la risoluzione di un errore.
     void onErrorCleared();
 
+    /// Chiamato quando lo stato della connessione con il Central_System cambia.
+    void onCentralSystemConnectionChanged(bool connected);
+
     // --- Gestione comandi remoti dal Central_System ---
 
     /**

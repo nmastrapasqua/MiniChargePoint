@@ -310,6 +310,12 @@ void OcppClient16J::setRemoteCommandCallback(RemoteCommandCallback cb)
     _remoteCommandCallback = cb;
 }
 
+void OcppClient16J::setConnectionStatusCallback(ConnectionStatusCallback cb)
+{
+    Poco::Mutex::ScopedLock lock(_mutex);
+    _connectionStatusCallback = cb;
+}
+
 // ---------------------------------------------------------------------------
 // sendCallResult — Invia CALLRESULT in risposta a un CALL ricevuto
 // ---------------------------------------------------------------------------
@@ -379,6 +385,7 @@ void OcppClient16J::sendRaw(const std::string& data)
         Logger& logger = Logger::get("OcppClient");
         logger.warning("Send failed: %s", e.displayText());
         _connected = false;
+        notifyConnectionStatus(false);
     }
 }
 
@@ -409,6 +416,7 @@ void OcppClient16J::receiveLoop()
             if (n <= 0 || (flags & Poco::Net::WebSocket::FRAME_OP_CLOSE)) {
                 logger.warning("WebSocket connection closed by Central_System");
                 _connected = false;
+                notifyConnectionStatus(false);
                 startReconnect();
                 break;
             }
@@ -452,6 +460,7 @@ void OcppClient16J::receiveLoop()
             if (_running) {
                 logger.warning("Receive error: %s", e.displayText());
                 _connected = false;
+                notifyConnectionStatus(false);
                 startReconnect();
             }
             break;
@@ -667,6 +676,7 @@ void OcppClient16J::onReconnectTimer(Poco::Timer& /*timer*/)
 
         _connected = true;
         logger.information("Reconnected to Central_System");
+        notifyConnectionStatus(true);
 
         // Restart receive thread
         if (_receiveThread.isRunning()) {
@@ -694,5 +704,21 @@ void OcppClient16J::startReconnect()
         _reconnectTimer.start(cb);
     } catch (Poco::Exception& e) {
         logger.error("Failed to start reconnect timer: %s", e.displayText());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// notifyConnectionStatus — Notifica il cambio stato connessione
+// ---------------------------------------------------------------------------
+
+void OcppClient16J::notifyConnectionStatus(bool connected)
+{
+    ConnectionStatusCallback cb;
+    {
+        Poco::Mutex::ScopedLock lock(_mutex);
+        cb = _connectionStatusCallback;
+    }
+    if (cb) {
+        try { cb(connected); } catch (...) {}
     }
 }

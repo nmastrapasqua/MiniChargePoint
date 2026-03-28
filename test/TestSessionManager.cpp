@@ -66,6 +66,7 @@ public:
     }
     void setResponseCallback(ResponseCallback) override {}
     void setRemoteCommandCallback(RemoteCommandCallback) override {}
+    void setConnectionStatusCallback(ConnectionStatusCallback) override {}
     void sendCallResult(const std::string& uniqueId,
                         const Poco::JSON::Object& payload) override {
         std::string st;

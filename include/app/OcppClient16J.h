@@ -81,6 +81,7 @@ public:
 
     void setResponseCallback(ResponseCallback cb) override;
     void setRemoteCommandCallback(RemoteCommandCallback cb) override;
+    void setConnectionStatusCallback(ConnectionStatusCallback cb) override;
 
     void sendCallResult(
         const std::string& uniqueId,
@@ -101,6 +102,7 @@ private:
 
     ResponseCallback _responseCallback;
     RemoteCommandCallback _remoteCommandCallback;
+    ConnectionStatusCallback _connectionStatusCallback;
     mutable Poco::Mutex _mutex;
     mutable Poco::Mutex _wsMutex;  // protects WebSocket send
 
@@ -175,6 +177,9 @@ private:
 
     /// Avvia il timer di riconnessione (ogni 10 secondi).
     void startReconnect();
+
+    /// Notifica il cambio stato connessione ai listener.
+    void notifyConnectionStatus(bool connected);
 };
 
 #endif // OCPPCLIENT16J_H

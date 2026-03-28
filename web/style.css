@@ -1,0 +1,169 @@
+/* MiniChargePoint — Web Interface Styles */
+
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --success: #22c55e;
+  --success-hover: #16a34a;
+  --warning: #f59e0b;
+  --warning-hover: #d97706;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --outline: #94a3b8;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); border: 0;
+}
+
+/* Header */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+header h1 { font-size: 1.25rem; font-weight: 700; }
+
+/* Badges */
+.badge {
+  display: inline-block; padding: .25rem .75rem;
+  border-radius: 999px; font-size: .8rem; font-weight: 600;
+}
+.badge.connected    { background: #dcfce7; color: #166534; }
+.badge.disconnected { background: #fee2e2; color: #991b1b; }
+
+/* Main layout */
+main { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
+
+/* Cards grid */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.card h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: .5rem; }
+
+/* State badge inside connector card */
+.state-badge {
+  display: inline-block; padding: .3rem 1rem;
+  border-radius: 999px; font-weight: 700; font-size: .95rem;
+}
+.state-badge.available  { background: #dcfce7; color: #166534; }
+.state-badge.preparing  { background: #fef9c3; color: #854d0e; }
+.state-badge.charging   { background: #dbeafe; color: #1e40af; }
+.state-badge.finishing   { background: #e0e7ff; color: #3730a3; }
+.state-badge.faulted    { background: #fee2e2; color: #991b1b; }
+
+/* Meter */
+.meter { font-size: 2rem; font-weight: 800; }
+.meter-unit { font-size: .9rem; color: var(--text-muted); }
+
+/* Session card */
+#card-session p { font-size: .9rem; color: var(--text-muted); margin-top: .25rem; }
+#card-session span { font-weight: 600; color: var(--text); }
+
+/* Controls */
+.controls {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  box-shadow: var(--shadow);
+  margin-bottom: 1.5rem;
+}
+.controls h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: .75rem; }
+
+.btn-group { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.btn-group:last-child { margin-bottom: 0; }
+
+.charge-group input {
+  flex: 1 1 120px; padding: .5rem .75rem;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: .9rem; outline: none;
+}
+.charge-group input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59,130,246,.25); }
+
+/* Buttons */
+.btn {
+  padding: .5rem 1rem; border: none; border-radius: var(--radius);
+  font-size: .9rem; font-weight: 600; cursor: pointer;
+  transition: background .15s, transform .1s;
+}
+.btn:active { transform: scale(.97); }
+.btn-primary   { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-secondary { background: var(--outline); color: #fff; }
+.btn-secondary:hover { background: #78909c; }
+.btn-success   { background: var(--success); color: #fff; }
+.btn-success:hover { background: var(--success-hover); }
+.btn-warning   { background: var(--warning); color: #fff; }
+.btn-warning:hover { background: var(--warning-hover); }
+.btn-danger    { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: var(--danger-hover); }
+.btn-outline   { background: transparent; color: var(--outline); border: 2px solid var(--outline); }
+.btn-outline:hover { background: var(--outline); color: #fff; }
+
+/* Log section */
+.log-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  box-shadow: var(--shadow);
+}
+.log-section h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: .75rem; }
+
+#log-container {
+  max-height: 260px; overflow-y: auto;
+  font-family: "Cascadia Code", "Fira Code", monospace;
+  font-size: .8rem; line-height: 1.6;
+}
+.log-entry { padding: .15rem 0; border-bottom: 1px solid var(--border); }
+.log-entry:last-child { border-bottom: none; }
+.log-time  { color: var(--text-muted); margin-right: .5rem; }
+.log-level { font-weight: 700; margin-right: .5rem; text-transform: uppercase; }
+.log-level.error       { color: var(--danger); }
+.log-level.warning     { color: var(--warning); }
+.log-level.information { color: var(--primary); }
+.log-level.debug       { color: var(--text-muted); }
+
+/* Responsive */
+@media (max-width: 600px) {
+  main { padding: 1rem; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .btn { font-size: .8rem; padding: .45rem .75rem; }
+}
+@media (max-width: 380px) {
+  .cards { grid-template-columns: 1fr; }
+}

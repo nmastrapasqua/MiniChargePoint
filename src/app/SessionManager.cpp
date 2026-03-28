@@ -144,6 +144,19 @@ void SessionManager::onErrorCleared()
     notifyStatusUpdate();
 }
 
+void SessionManager::onCentralSystemConnectionChanged(bool connected)
+{
+    Logger& logger = Logger::get("SessionManager");
+    logger.information("Central_System connection status: %s",
+                       std::string(connected ? "connected" : "disconnected"));
+
+    {
+        Poco::Mutex::ScopedLock lock(_mutex);
+        _status.centralSystemConnected = connected;
+    }
+    notifyStatusUpdate();
+}
+
 // ---------------------------------------------------------------------------
 // Comandi remoti dal Central_System (Proprietà 13)
 // ---------------------------------------------------------------------------
@@ -229,6 +242,27 @@ void SessionManager::onRemoteCommand(const std::string& action,
 void SessionManager::onProtocolResponse(const Poco::JSON::Object& response)
 {
     Logger& logger = Logger::get("SessionManager");
+
+    // Gestione BootNotification.conf — aggiorna stato connessione Central_System
+    std::string action = response.optValue<std::string>("action", "");
+    if (action == "BootNotification") {
+        std::string bootStatus = "";
+        if (response.has("status")) {
+            bootStatus = response.getValue<std::string>("status");
+        }
+        bool accepted = (bootStatus == "Accepted");
+        {
+            Poco::Mutex::ScopedLock lock(_mutex);
+            _status.centralSystemConnected = accepted;
+        }
+        if (accepted) {
+            logger.information("Central_System connection confirmed (BootNotification Accepted)");
+        } else {
+            logger.warning("BootNotification not accepted: %s", bootStatus);
+        }
+        notifyStatusUpdate();
+        return;
+    }
 
     // Gestione Authorize.conf (Proprietà 12)
     if (response.has("idTagInfo") && _awaitingAuthorize) {

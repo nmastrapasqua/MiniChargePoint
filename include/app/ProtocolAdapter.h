@@ -48,6 +48,10 @@ public:
         int meterStop,
         const std::string& reason) = 0;
 
+    // Callback per cambio stato connessione (true = connesso, false = disconnesso)
+    using ConnectionStatusCallback = std::function<void(bool connected)>;
+    virtual void setConnectionStatusCallback(ConnectionStatusCallback cb) = 0;
+
     // Callback per risposte dal Central_System
     using ResponseCallback = std::function<void(const Poco::JSON::Object&)>;
     virtual void setResponseCallback(ResponseCallback cb) = 0;

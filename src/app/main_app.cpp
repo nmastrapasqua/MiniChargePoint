@@ -147,6 +147,12 @@ int main(int argc, char* argv[])
             sessionManager.onRemoteCommand(action, payload, uniqueId);
         });
 
+    // --- Callback: stato connessione Central_System → SessionManager ---
+    protocol->setConnectionStatusCallback(
+        [&](bool connected) {
+            sessionManager.onCentralSystemConnectionChanged(connected);
+        });
+
     // --- Callback: aggiornamenti stato SessionManager → WebSocket browser ---
     sessionManager.setStatusCallback(
         [&](const SessionManager::ChargePointStatus& status) {
