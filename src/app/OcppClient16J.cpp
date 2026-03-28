@@ -149,6 +149,12 @@ void OcppClient16J::disconnect()
     // Stop reconnect timer
     try { _reconnectTimer.restart(0); } catch (...) {}
 
+    // Prima attendere che il receiveLoop termini (usa _running per uscire)
+    if (_receiveThread.isRunning()) {
+        try { _receiveThread.join(5000); } catch (...) {}
+    }
+
+    // Ora è sicuro distruggere il WebSocket
     {
         Poco::Mutex::ScopedLock lock(_wsMutex);
         if (_ws) {
@@ -158,10 +164,6 @@ void OcppClient16J::disconnect()
             _ws.reset();
         }
         _session.reset();
-    }
-
-    if (_receiveThread.isRunning()) {
-        try { _receiveThread.join(3000); } catch (...) {}
     }
 
     Logger& logger = Logger::get("OcppClient");
