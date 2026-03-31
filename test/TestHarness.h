@@ -45,6 +45,7 @@ static void runTest(const std::string& name, std::function<void()> fn)
 // ---------------------------------------------------------------------------
 // Helper per conversione a stringa (usato dalle macro ASSERT)
 // ---------------------------------------------------------------------------
+__attribute__((unused))
 static std::string std_to_string_helper(const std::string& s) { return s; }
 static std::string std_to_string_helper(int v) { return std::to_string(v); }
 
