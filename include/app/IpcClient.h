@@ -9,11 +9,11 @@
 #include <Poco/Runnable.h>
 #include <Poco/JSON/Object.h>
 
-#include "common/IIpcSender.h"
+//#include "common/IIpcSender.h"
 #include "common/ThreadSafeQueue.h"
 #include "common/SessionEvent.h"
 
-class IpcClient : public IIpcSender, public Poco::Runnable {
+class IpcClient : /* public IIpcSender, */ public Poco::Runnable {
 public:
     explicit IpcClient(const std::string& socketPath);
     ~IpcClient();
@@ -23,7 +23,9 @@ public:
 
     bool isConnected() const;
 
-    void sendMessage(const Poco::JSON::Object& msg) override;
+    //void sendMessage(const Poco::JSON::Object& msg) override;
+
+    void setInQueue(ThreadSafeQueue<std::string>* q) { _inQueue = q; }
 
     void setOutQueue(ThreadSafeQueue<SessionEvent>* q) { _outQueue = q; }
 
@@ -39,7 +41,7 @@ private:
 
     Poco::Thread _thread;
 
-    ThreadSafeQueue<std::string> _sendQueue;
+    ThreadSafeQueue<std::string>* _inQueue = nullptr;
 
     ThreadSafeQueue<SessionEvent>* _outQueue = nullptr;
 

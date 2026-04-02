@@ -33,7 +33,6 @@ void IpcClient::stop() {
     if (!_running) return;
 
     _running = false;
-    _sendQueue.close();
 
     closeSocket();
 
@@ -47,13 +46,17 @@ bool IpcClient::isConnected() const {
 }
 
 // ------------------------------------------------------------
-
+//Spostare in SessionManager
+/**
 void IpcClient::sendMessage(const Poco::JSON::Object& msg) {
+	if (!_inQueue)
+		return;
+
     std::ostringstream oss;
     msg.stringify(oss);
-    _sendQueue.push(oss.str() + "\n");
+    _inQueue->push(oss.str() + "\n");
 }
-
+*/
 // ------------------------------------------------------------
 
 void IpcClient::run() {
@@ -144,7 +147,9 @@ void IpcClient::handleRead() {
 // ------------------------------------------------------------
 
 void IpcClient::handleWrite() {
-    while (auto msg = _sendQueue.try_pop()) {
+	if (!_inQueue) return;
+
+    while (auto msg = _inQueue->try_pop()) {
         _socket.sendBytes(msg->data(), (int)msg->size());
     }
 }
