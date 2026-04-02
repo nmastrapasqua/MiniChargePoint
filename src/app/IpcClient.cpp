@@ -1,347 +1,206 @@
-/**
- * IpcClient — Implementazione del client IPC su Unix Domain Socket.
- *
- * Il client si connette al Unix Domain Socket creato dal Firmware_Layer,
- * scambia messaggi JSON delimitati da newline, e tenta la riconnessione
- * automatica ogni 5 secondi se la connessione viene persa.
- *
- * Thread:
- *   - readThread: legge messaggi dal Firmware_Layer
- *
- * Timer:
- *   - reconnectTimer: tenta la riconnessione ogni 5 secondi
- *
- * Gestione errori:
- *   - JSON malformato → scartato, log Error
- *   - Tipo messaggio sconosciuto → ignorato, log Warning
- *   - Connessione persa → log Warning, avvio riconnessione automatica
- *
- * Requisiti validati: 1.3, 1.4, 1.5
- */
 #include "app/IpcClient.h"
 #include "common/IpcMessage.h"
 
 #include <Poco/Net/SocketAddress.h>
 #include <Poco/JSON/Parser.h>
-#include <Poco/Exception.h>
 #include <Poco/Logger.h>
-#include <Poco/Delegate.h>
 
 #include <sstream>
+#include <thread>
 
 using Poco::Logger;
 
-// ---- ReadRunnable -----------------------------------------------------------
-
-IpcClient::ReadRunnable::ReadRunnable(IpcClient& client)
-    : _client(client)
-{
-}
-
-void IpcClient::ReadRunnable::run()
-{
-    _client.readLoop();
-}
-
-// ---- IpcClient --------------------------------------------------------------
+// ------------------------------------------------------------
 
 IpcClient::IpcClient(const std::string& socketPath)
     : _socketPath(socketPath)
-    , _connected(false)
-    , _running(false)
-    , _reconnectNeeded(false)
-    , _reconnectTimerStarted(false)
-    , _readRunnable(*this)
-    , _reconnectTimer(0, 0)
 {
 }
 
-IpcClient::~IpcClient()
-{
-    disconnect();
+IpcClient::~IpcClient() {
+    stop();
 }
 
-void IpcClient::connect()
-{
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        if (_running) return;
-        _running = true;
-    }
+// ------------------------------------------------------------
 
-    Logger& logger = Logger::get("IpcClient");
-    logger.information("Connecting to IPC server at %s", _socketPath);
-
-    if (tryConnect()) {
-        startReadThread();
-    } else {
-        logger.warning("IPC connection failed, will retry every 5 seconds");
-        scheduleReconnect();
-    }
+void IpcClient::start() {
+    if (_running) return;
+    _running = true;
+    _thread.start(*this);
 }
 
-void IpcClient::disconnect()
-{
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        if (!_running) return;
-        _running = false;
-    }
+void IpcClient::stop() {
+    if (!_running) return;
 
-    Logger& logger = Logger::get("IpcClient");
-    logger.information("Disconnecting IPC client");
+    _running = false;
+    _sendQueue.close();
 
-    _reconnectNeeded = false;
+    closeSocket();
 
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        if (_connected) {
-            try { _socket.close(); } catch (...) {}
-            _connected = false;
-        }
-    }
-
-    stopReadThread();
+    try { _thread.join(); } catch (...) {}
 }
 
-bool IpcClient::isConnected() const
-{
-    Poco::Mutex::ScopedLock lock(_mutex);
+// ------------------------------------------------------------
+
+bool IpcClient::isConnected() const {
     return _connected;
 }
 
-void IpcClient::sendMessage(const Poco::JSON::Object& msg)
-{
-    Poco::Mutex::ScopedLock lock(_mutex);
-    if (!_connected) return;
+// ------------------------------------------------------------
 
+void IpcClient::sendMessage(const Poco::JSON::Object& msg) {
     std::ostringstream oss;
     msg.stringify(oss);
-    std::string data = oss.str() + "\n";
+    _sendQueue.push(oss.str() + "\n");
+}
 
-    try {
-        _socket.sendBytes(data.data(), static_cast<int>(data.size()));
-    } catch (Poco::Exception& e) {
-        Logger& logger = Logger::get("IpcClient");
-        logger.error("Failed to send IPC message: %s", e.displayText());
-        _connected = false;
+// ------------------------------------------------------------
+
+void IpcClient::run() {
+    Logger& logger = Logger::get("IpcClient");
+
+    while (_running) {
+
+        // --- CONNECT ---
+        if (!_connected) {
+            if (tryConnect()) {
+                logger.information("IPC connected");
+                notifyConnectionStatus(true);
+            } else {
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                continue;
+            }
+        }
+
+        try {
+            // --- READ ---
+            if (_socket.poll(Poco::Timespan(0, 100000), Poco::Net::Socket::SELECT_READ)) {
+                handleRead();
+            }
+
+            // --- WRITE ---
+            handleWrite();
+
+        } catch (Poco::Exception& e) {
+            logger.warning("IPC error: %s", e.displayText());
+
+            closeSocket();
+            _connected = false;
+            notifyConnectionStatus(false);
+
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
     }
 }
 
-void IpcClient::setMessageCallback(MessageCallback cb)
-{
-    Poco::Mutex::ScopedLock lock(_mutex);
-    _messageCallback = cb;
-}
+// ------------------------------------------------------------
 
-void IpcClient::setConnectionStatusCallback(ConnectionStatusCallback cb)
-{
-    Poco::Mutex::ScopedLock lock(_mutex);
-    _connectionStatusCallback = cb;
-}
-
-bool IpcClient::tryConnect()
-{
+bool IpcClient::tryConnect() {
     Logger& logger = Logger::get("IpcClient");
+
     try {
         Poco::Net::SocketAddress addr(_socketPath);
         _socket = Poco::Net::StreamSocket();
         _socket.connect(addr);
-        {
-            Poco::Mutex::ScopedLock lock(_mutex);
-            _connected = true;
-        }
-        logger.information("Connected to IPC server at %s", _socketPath);
-        notifyConnectionStatus(true);
+
+        _connected = true;
         return true;
+
     } catch (Poco::Exception& e) {
-        logger.debug("IPC connection attempt failed: %s", e.displayText());
+        logger.debug("Connect failed: %s", e.displayText());
         return false;
     }
 }
 
-void IpcClient::startReadThread()
-{
-    // Join del thread precedente prima di riavviarlo
-    if (_readThread.isRunning()) {
-        try { _readThread.join(2000); } catch (...) {}
-    }
-    _readThread.start(_readRunnable);
+// ------------------------------------------------------------
+
+void IpcClient::closeSocket() {
+    try { _socket.close(); } catch (...) {}
 }
 
-void IpcClient::stopReadThread()
-{
-    if (_readThread.isRunning()) {
-        try { _readThread.join(2000); } catch (...) {}
-    }
-}
+// ------------------------------------------------------------
 
-void IpcClient::scheduleReconnect()
-{
-    bool running;
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        running = _running;
-    }
-    if (!running) return;
-
-    // Segnala che la riconnessione è necessaria
-    _reconnectNeeded = true;
-
-    // Avvia il timer solo la prima volta
-    if (!_reconnectTimerStarted) {
-        Logger& logger = Logger::get("IpcClient");
-        logger.warning("Scheduling IPC reconnection every 5 seconds");
-
-        try {
-            _reconnectTimer.setStartInterval(5000);
-            _reconnectTimer.setPeriodicInterval(5000);
-            Poco::TimerCallback<IpcClient> cb(*this, &IpcClient::onReconnect);
-            _reconnectTimer.start(cb);
-            _reconnectTimerStarted = true;
-        } catch (Poco::Exception& e) {
-            logger.error("Failed to start reconnect timer: %s", e.displayText());
-        }
-    }
-}
-
-void IpcClient::stopReconnectTimer()
-{
-    _reconnectNeeded = false;
-}
-
-void IpcClient::notifyConnectionStatus(bool connected)
-{
-    ConnectionStatusCallback cb;
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        cb = _connectionStatusCallback;
-    }
-    if (cb) { try { cb(connected); } catch (...) {} }
-}
-
-void IpcClient::onReconnect(Poco::Timer& /*timer*/)
-{
-    if (!_reconnectNeeded) return;
-
-    bool running;
-    bool connected;
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        running = _running;
-        connected = _connected;
-    }
-    if (!running || connected) return;
-
-    Logger& logger = Logger::get("IpcClient");
-    logger.warning("Attempting IPC reconnection to %s", _socketPath);
-
-    if (tryConnect()) {
-        _reconnectNeeded = false;
-        startReadThread();
-    }
-}
-
-void IpcClient::readLoop()
-{
-    Logger& logger = Logger::get("IpcClient");
-    std::string buffer;
+void IpcClient::handleRead() {
     char chunk[1024];
 
-    while (true) {
-        bool running;
-        bool connected;
-        {
-            Poco::Mutex::ScopedLock lock(_mutex);
-            running = _running;
-            connected = _connected;
-        }
-        if (!running || !connected) break;
+    int n = _socket.receiveBytes(chunk, sizeof(chunk));
 
-        try {
-            Poco::Timespan timeout(1, 0); // 1 second
-            if (!_socket.poll(timeout, Poco::Net::Socket::SELECT_READ))
-                continue;
+    if (n <= 0) {
+        throw Poco::IOException("IPC disconnected");
+    }
 
-            int n = _socket.receiveBytes(chunk, sizeof(chunk));
-            if (n <= 0) {
-                logger.warning("IPC connection lost (Firmware_Layer disconnected)");
-                {
-                    Poco::Mutex::ScopedLock lock(_mutex);
-                    _connected = false;
-                }
-                notifyConnectionStatus(false);
-                scheduleReconnect();
-                break;
-            }
+    _buffer.append(chunk, n);
 
-            buffer.append(chunk, n);
+    size_t pos;
+    while ((pos = _buffer.find('\n')) != std::string::npos) {
+        std::string line = _buffer.substr(0, pos);
+        _buffer.erase(0, pos + 1);
 
-            // Process complete lines (newline-delimited JSON)
-            std::string::size_type pos;
-            while ((pos = buffer.find('\n')) != std::string::npos) {
-                std::string line = buffer.substr(0, pos);
-                buffer.erase(0, pos + 1);
-                if (!line.empty()) {
-                    processLine(line);
-                }
-            }
-        } catch (Poco::Exception& e) {
-            bool stillRunning;
-            {
-                Poco::Mutex::ScopedLock lock(_mutex);
-                stillRunning = _running;
-                _connected = false;
-            }
-            notifyConnectionStatus(false);
-            if (stillRunning) {
-                logger.warning("IPC read error: %s — will attempt reconnection", e.displayText());
-                scheduleReconnect();
-            }
-            break;
-        }
+        if (!line.empty())
+            processLine(line);
     }
 }
 
-void IpcClient::processLine(const std::string& line)
-{
+// ------------------------------------------------------------
+
+void IpcClient::handleWrite() {
+    while (auto msg = _sendQueue.try_pop()) {
+        _socket.sendBytes(msg->data(), (int)msg->size());
+    }
+}
+
+// ------------------------------------------------------------
+
+void IpcClient::notifyConnectionStatus(bool connected) {
+    if (!_outQueue) return;
+
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::FirmwareConnection;
+    evt.boolParam = connected;
+
+    _outQueue->push(std::move(evt));
+}
+
+// ------------------------------------------------------------
+
+void IpcClient::processLine(const std::string& line) {
     Logger& logger = Logger::get("IpcClient");
 
     Poco::JSON::Object::Ptr obj;
+
     try {
         obj = IpcMessage::parseJson(line);
-    } catch (Poco::Exception& e) {
-        logger.error("Malformed IPC message (discarded): %s — %s", line, e.displayText());
+    } catch (...) {
+        logger.error("Invalid JSON: %s", line);
         return;
     }
 
-    if (!obj->has("type")) {
-        logger.error("IPC message missing 'type' field (discarded): %s", line);
-        return;
-    }
+    if (!obj->has("type")) return;
 
     std::string type = obj->getValue<std::string>("type");
 
-    if (type != IpcMessage::TYPE_COMMAND &&
-        type != IpcMessage::TYPE_CONNECTOR_STATE &&
-        type != IpcMessage::TYPE_METER_VALUE &&
-        type != IpcMessage::TYPE_ERROR &&
-        type != IpcMessage::TYPE_ERROR_CLEARED)
-    {
-        logger.warning("Unknown IPC message type '%s' (ignored)", type);
+    if (!_outQueue) return;
+
+    SessionEvent evt;
+
+    if (type == IpcMessage::TYPE_CONNECTOR_STATE) {
+        evt.type = SessionEvent::Type::ConnectorStateChanged;
+        evt.stringParam = obj->getValue<std::string>("state");
+
+    } else if (type == IpcMessage::TYPE_METER_VALUE) {
+        evt.type = SessionEvent::Type::MeterValue;
+        evt.intParam = obj->getValue<int>("value");
+
+    } else if (type == IpcMessage::TYPE_ERROR) {
+        evt.type = SessionEvent::Type::Error;
+        evt.stringParam = obj->getValue<std::string>("errorType");
+
+    } else if (type == IpcMessage::TYPE_ERROR_CLEARED) {
+        evt.type = SessionEvent::Type::ErrorCleared;
+
+    } else {
         return;
     }
 
-    MessageCallback cb;
-    {
-        Poco::Mutex::ScopedLock lock(_mutex);
-        cb = _messageCallback;
-    }
-    if (cb) {
-        try {
-            cb(*obj);
-        } catch (Poco::Exception& e) {
-            logger.error("Error in message callback: %s", e.displayText());
-        }
-    }
+    _outQueue->push(std::move(evt));
 }

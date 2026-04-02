@@ -108,6 +108,7 @@ int main(int argc, char* argv[])
     WebServer webServer(cfg.httpPort, "web", sessionManager);
 
     // --- Callback: messaggi IPC dal Firmware_Layer → SessionManager ---
+    /**
     ipcClient.setMessageCallback(
         [&](const Poco::JSON::Object& msg) {
             if (!msg.has("type")) return;
@@ -132,7 +133,7 @@ int main(int argc, char* argv[])
                 sessionManager.onErrorCleared();
             }
         });
-
+	*/
     // --- Callback: risposte OCPP dal Central_System → SessionManager ---
     protocol->setResponseCallback(
         [&](const Poco::JSON::Object& response) {
@@ -154,11 +155,12 @@ int main(int argc, char* argv[])
         });
 
     // --- Callback: stato connessione IPC Firmware → SessionManager ---
+    /**
     ipcClient.setConnectionStatusCallback(
         [&](bool connected) {
             sessionManager.onFirmwareConnectionChanged(connected);
         });
-
+	*/
     // --- Callback: aggiornamenti stato SessionManager → WebSocket browser ---
     sessionManager.setStatusCallback(
         [&](const SessionManager::ChargePointStatus& status) {
@@ -170,7 +172,7 @@ int main(int argc, char* argv[])
     std::signal(SIGTERM, signalHandler);
 
     // --- Avvio componenti ---
-    ipcClient.connect();
+    ipcClient.start();
     logger.information("IPC client connected to firmware (socket: %s)", cfg.socketPath);
 
     protocol->connect();
@@ -191,7 +193,7 @@ int main(int argc, char* argv[])
     logger.information("charge_point_app shutting down...");
     webServer.stop();
     protocol->disconnect();
-    ipcClient.disconnect();
+    ipcClient.stop();
     logger.information("charge_point_app stopped.");
 
     return 0;

@@ -1,120 +1,58 @@
-/**
- * IpcClient — Client IPC su Unix Domain Socket per l'Application_Layer.
- *
- * Responsabilità:
- *   - Connettersi al Unix Domain Socket esposto dal Firmware_Layer
- *   - Inviare messaggi JSON (delimitati da newline) al Firmware_Layer
- *   - Ricevere messaggi JSON dal Firmware_Layer e notificarli tramite callback
- *   - Riconnessione automatica ogni 5 secondi se connessione persa (log Warning)
- *
- * Thread dedicato per lettura; messaggi JSON delimitati da newline.
- *
- * Requisiti validati: 1.3, 1.4, 1.5
- */
 #ifndef IPCCLIENT_H
 #define IPCCLIENT_H
 
 #include <string>
-#include <functional>
+#include <atomic>
+
 #include <Poco/Net/StreamSocket.h>
 #include <Poco/Thread.h>
-#include <Poco/Timer.h>
-#include <Poco/Mutex.h>
-#include <Poco/JSON/Object.h>
 #include <Poco/Runnable.h>
+#include <Poco/JSON/Object.h>
+
 #include "common/IIpcSender.h"
+#include "common/ThreadSafeQueue.h"
+#include "common/SessionEvent.h"
 
-class IpcClient : public IIpcSender {
+class IpcClient : public IIpcSender, public Poco::Runnable {
 public:
-    /**
-     * Costruttore.
-     * @param socketPath  Percorso del file Unix Domain Socket del Firmware_Layer.
-     */
     explicit IpcClient(const std::string& socketPath);
+    ~IpcClient();
 
-    virtual ~IpcClient();
+    void start();
+    void stop();
 
-    /// Connette al Unix Domain Socket del Firmware_Layer.
-    void connect();
-
-    /// Disconnette e ferma i thread.
-    void disconnect();
-
-    /// Restituisce true se la connessione è attiva.
     bool isConnected() const;
 
-    /**
-     * Invia un messaggio JSON al Firmware_Layer.
-     * Il messaggio viene serializzato e terminato con newline.
-     * Se non connesso, il messaggio viene scartato.
-     * Virtuale per consentire il mocking nei test.
-     */
-    virtual void sendMessage(const Poco::JSON::Object& msg) override;
+    void sendMessage(const Poco::JSON::Object& msg) override;
 
-    /// Callback invocata alla ricezione di un messaggio JSON valido.
-    using MessageCallback = std::function<void(const Poco::JSON::Object&)>;
+    void setOutQueue(ThreadSafeQueue<SessionEvent>* q) { _outQueue = q; }
 
-    /// Imposta la callback per i messaggi ricevuti.
-    void setMessageCallback(MessageCallback cb);
-
-    /// Callback invocata quando lo stato della connessione IPC cambia.
-    using ConnectionStatusCallback = std::function<void(bool connected)>;
-
-    /// Imposta la callback per il cambio stato connessione.
-    void setConnectionStatusCallback(ConnectionStatusCallback cb);
+    void run() override;
 
 private:
     std::string _socketPath;
+
     Poco::Net::StreamSocket _socket;
-    bool _connected;
-    bool _running;
-    bool _reconnectNeeded;
-    bool _reconnectTimerStarted;
-    MessageCallback _messageCallback;
-    ConnectionStatusCallback _connectionStatusCallback;
-    mutable Poco::Mutex _mutex;
 
-    // --- Thread lettura ---
-    class ReadRunnable : public Poco::Runnable {
-    public:
-        explicit ReadRunnable(IpcClient& client);
-        void run() override;
-    private:
-        IpcClient& _client;
-    };
+    std::atomic<bool> _running{false};
+    std::atomic<bool> _connected{false};
 
-    ReadRunnable _readRunnable;
-    Poco::Thread _readThread;
+    Poco::Thread _thread;
 
-    // --- Timer riconnessione ---
-    Poco::Timer _reconnectTimer;
+    ThreadSafeQueue<std::string> _sendQueue;
 
-    /// Loop di lettura: legge messaggi JSON dal Firmware_Layer.
-    void readLoop();
+    ThreadSafeQueue<SessionEvent>* _outQueue = nullptr;
 
-    /// Processa una singola riga JSON ricevuta.
+    // --- internal ---
+    bool tryConnect();
+    void closeSocket();
+    void notifyConnectionStatus(bool connected);
+
+    void handleRead();
+    void handleWrite();
     void processLine(const std::string& line);
 
-    /// Callback del timer di riconnessione (ogni 5 secondi).
-    void onReconnect(Poco::Timer& timer);
-
-    /// Tenta la connessione al socket. Restituisce true se riuscita.
-    bool tryConnect();
-
-    /// Avvia il thread di lettura.
-    void startReadThread();
-
-    /// Ferma il thread di lettura.
-    void stopReadThread();
-
-    /// Avvia il timer di riconnessione (ogni 5 secondi), se non già attivo.
-    void scheduleReconnect();
-
-    /// Ferma il timer di riconnessione.
-    void stopReconnectTimer();
-
-    /// Notifica il cambio stato connessione ai listener.
-    void notifyConnectionStatus(bool connected);
+    std::string _buffer;
 };
 
-#endif // IPCCLIENT_H
+#endif
