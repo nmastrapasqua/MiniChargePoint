@@ -72,6 +72,27 @@ public:
         return value;
     }
 
+    template<typename Rep, typename Period>
+    std::optional<T> try_pop_for(const std::chrono::duration<Rep, Period>& timeout) {
+        std::unique_lock<std::mutex> lock(mtx_);
+
+        if (!cv_.wait_for(lock, timeout, [this] {
+            return closed_ || !queue_.empty();
+        })) {
+            // timeout scaduto
+            return std::nullopt;
+        }
+
+        if (queue_.empty()) {
+            // chiusa e vuota
+            return std::nullopt;
+        }
+
+        T value = std::move(queue_.front());
+        queue_.pop();
+        return value;
+    }
+
     // Check non bloccante
     bool empty() const {
         std::lock_guard<std::mutex> lock(mtx_);
