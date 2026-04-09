@@ -12,7 +12,8 @@
 #ifndef WEBSERVER_H
 #define WEBSERVER_H
 
-#include "app/SessionManager.h"
+#include "common/SessionEvent.h"
+#include "common/ThreadSafeQueue.h"
 
 #include <string>
 #include <memory>
@@ -45,15 +46,16 @@ private:
  */
 class RequestHandlerFactory : public Poco::Net::HTTPRequestHandlerFactory {
 public:
-    RequestHandlerFactory(const std::string& webRoot,
-                          SessionManager& sessionManager);
+    RequestHandlerFactory(const std::string& webRoot, ThreadSafeQueue<SessionEvent>* q, ThreadSafeQueue<std::string>* uq);
 
     Poco::Net::HTTPRequestHandler* createRequestHandler(
         const Poco::Net::HTTPServerRequest& request) override;
 
+
 private:
     std::string _webRoot;
-    SessionManager& _sessionManager;
+    ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
+    ThreadSafeQueue<std::string>* _uiQueue = nullptr;
 };
 
 /**
@@ -67,8 +69,7 @@ public:
      * @param webRoot         Percorso della directory con i file statici (web/)
      * @param sessionManager  Riferimento al SessionManager per i comandi e lo stato
      */
-    WebServer(int port, const std::string& webRoot,
-              SessionManager& sessionManager);
+    WebServer(int port, const std::string& webRoot, ThreadSafeQueue<SessionEvent>* q, ThreadSafeQueue<std::string>* uq);
 
     ~WebServer();
 
@@ -81,8 +82,9 @@ public:
 private:
     int _port;
     std::string _webRoot;
-    SessionManager& _sessionManager;
     std::unique_ptr<Poco::Net::HTTPServer> _httpServer;
+    ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
+    ThreadSafeQueue<std::string>* _uiQueue = nullptr;
 };
 
 #endif // WEBSERVER_H

@@ -6,7 +6,8 @@
 #ifndef WEBSOCKETHANDLER_H
 #define WEBSOCKETHANDLER_H
 
-#include "app/SessionManager.h"
+#include "common/SessionEvent.h"
+#include "common/ThreadSafeQueue.h"
 
 #include <vector>
 #include <string>
@@ -15,50 +16,25 @@
 #include <Poco/Net/HTTPServerRequest.h>
 #include <Poco/Net/HTTPServerResponse.h>
 #include <Poco/Net/WebSocket.h>
-#include <Poco/Mutex.h>
 #include <Poco/JSON/Object.h>
+#include <Poco/Logger.h>
 
-/**
- * Entry per un client WebSocket connesso.
- * Il sendMutex protegge le operazioni di invio sul WebSocket.
- */
-struct WsClientEntry {
-    Poco::Net::WebSocket* ws;
-    Poco::Mutex sendMutex;
-    std::atomic<bool> alive;
-
-    explicit WsClientEntry(Poco::Net::WebSocket* s) : ws(s), alive(true) {}
-};
 
 class WebSocketHandler : public Poco::Net::HTTPRequestHandler {
 public:
-    explicit WebSocketHandler(SessionManager& sessionManager);
+    explicit WebSocketHandler(ThreadSafeQueue<SessionEvent>* q, ThreadSafeQueue<std::string>* uq);
 
     void handleRequest(Poco::Net::HTTPServerRequest& request,
                        Poco::Net::HTTPServerResponse& response) override;
 
 private:
-    SessionManager& _sessionManager;
+    ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
+    ThreadSafeQueue<std::string>* _uiQueue = nullptr;
+
     void processCommand(const std::string& json);
+
 };
 
-class WebSocketBroadcaster {
-public:
-    static WebSocketBroadcaster& instance();
 
-    std::shared_ptr<WsClientEntry> addClient(Poco::Net::WebSocket* ws);
-    void removeClient(const std::shared_ptr<WsClientEntry>& entry);
-
-    void sendStatusUpdate(const SessionManager::ChargePointStatus& status);
-    void sendLogEvent(const std::string& level, const std::string& message);
-
-private:
-    WebSocketBroadcaster() = default;
-
-    std::vector<std::shared_ptr<WsClientEntry>> _clients;
-    Poco::Mutex _clientsMutex;
-
-    void broadcast(const std::string& json);
-};
 
 #endif // WEBSOCKETHANDLER_H

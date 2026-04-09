@@ -26,7 +26,8 @@ struct SessionEvent {
         WebStartCharge,
         WebStopCharge,
         WebTriggerError,
-        WebClearError
+        WebClearError,
+		NotifyStatusUpdate
     };
 
     Type type;

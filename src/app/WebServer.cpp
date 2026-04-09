@@ -90,10 +90,10 @@ std::string StaticFileHandler::getMimeType(const std::string& path) const
 // RequestHandlerFactory
 // ---------------------------------------------------------------------------
 
-RequestHandlerFactory::RequestHandlerFactory(const std::string& webRoot,
-                                             SessionManager& sessionManager)
+RequestHandlerFactory::RequestHandlerFactory(const std::string& webRoot, ThreadSafeQueue<SessionEvent>* q, ThreadSafeQueue<std::string>* uq)
     : _webRoot(webRoot)
-    , _sessionManager(sessionManager)
+	, _eventQueue(q)
+	, _uiQueue(uq)
 {
 }
 
@@ -103,7 +103,7 @@ Poco::Net::HTTPRequestHandler* RequestHandlerFactory::createRequestHandler(
     // Se la richiesta contiene l'header Upgrade: websocket → WebSocketHandler
     if (request.find("Upgrade") != request.end() &&
         Poco::icompare(request["Upgrade"], "websocket") == 0) {
-        return new WebSocketHandler(_sessionManager);
+        return new WebSocketHandler(_eventQueue, _uiQueue);
     }
 
     // Altrimenti → file statico
@@ -114,11 +114,11 @@ Poco::Net::HTTPRequestHandler* RequestHandlerFactory::createRequestHandler(
 // WebServer
 // ---------------------------------------------------------------------------
 
-WebServer::WebServer(int port, const std::string& webRoot,
-                     SessionManager& sessionManager)
+WebServer::WebServer(int port, const std::string& webRoot, ThreadSafeQueue<SessionEvent>* q, ThreadSafeQueue<std::string>* uq)
     : _port(port)
     , _webRoot(webRoot)
-    , _sessionManager(sessionManager)
+	, _eventQueue(q)
+	, _uiQueue(uq)
 {
 }
 
@@ -131,13 +131,6 @@ void WebServer::start()
 {
     Logger& logger = Logger::get("WebServer");
 
-    // Collegare il SessionManager al broadcaster per gli aggiornamenti UI
-    _sessionManager.setStatusCallback(
-        [](const SessionManager::ChargePointStatus& status) {
-            WebSocketBroadcaster::instance().sendStatusUpdate(status);
-        }
-    );
-
     try {
         Poco::Net::ServerSocket svs(_port);
         auto* params = new Poco::Net::HTTPServerParams;
@@ -145,7 +138,7 @@ void WebServer::start()
         params->setMaxThreads(4);
 
         _httpServer = std::make_unique<Poco::Net::HTTPServer>(
-            new RequestHandlerFactory(_webRoot, _sessionManager),
+            new RequestHandlerFactory(_webRoot, _eventQueue, _uiQueue),
             svs,
             params
         );

@@ -45,6 +45,7 @@
 
     ws.onmessage = function (evt) {
       try {
+		console.log("Status:", evt.data);
         var msg = JSON.parse(evt.data);
         if (msg.type === "status_update") applyStatus(msg);
       } catch (e) {}

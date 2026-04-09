@@ -101,77 +101,28 @@ int main(int argc, char* argv[])
     Poco::Logger& logger = Poco::Logger::get("AppMain");
     logger.information("charge_point_app starting");
 
+    // --- Code ---
+    ThreadSafeQueue<SessionEvent> eventQueue;
+    ThreadSafeQueue<std::string> uiQueue;
+    ThreadSafeQueue<std::string> ipcQueue;
+
     // --- Componenti ---
     IpcClient ipcClient(cfg.socketPath);
     std::unique_ptr<ProtocolAdapter> protocol = createProtocolAdapter(cfg);
-    SessionManager sessionManager(*protocol, ipcClient);
-    WebServer webServer(cfg.httpPort, "web", sessionManager);
-
-    // --- Callback: messaggi IPC dal Firmware_Layer → SessionManager ---
-    /**
-    ipcClient.setMessageCallback(
-        [&](const Poco::JSON::Object& msg) {
-            if (!msg.has("type")) return;
-            std::string type = msg.getValue<std::string>("type");
-
-            if (type == IpcMessage::TYPE_CONNECTOR_STATE) {
-                std::string state = msg.getValue<std::string>("state");
-                sessionManager.onConnectorStateChanged(state);
-            } else if (type == IpcMessage::TYPE_METER_VALUE) {
-                int value = msg.getValue<int>("value");
-                sessionManager.onMeterValue(value);
-            } else if (type == IpcMessage::TYPE_ERROR) {
-                std::string errorType = msg.getValue<std::string>("errorType");
-                // Mappa errorType → OCPP errorCode
-                std::string errorCode = "NoError";
-                if (errorType == "HardwareFault")
-                    errorCode = "InternalError";
-                else if (errorType == "TamperDetection")
-                    errorCode = "OtherError";
-                sessionManager.onError(errorType, errorCode);
-            } else if (type == IpcMessage::TYPE_ERROR_CLEARED) {
-                sessionManager.onErrorCleared();
-            }
-        });
-	*/
-    // --- Callback: risposte OCPP dal Central_System → SessionManager ---
-    protocol->setResponseCallback(
-        [&](const Poco::JSON::Object& response) {
-            sessionManager.onProtocolResponse(response);
-        });
-
-    // --- Callback: comandi remoti OCPP dal Central_System → SessionManager ---
-    protocol->setRemoteCommandCallback(
-        [&](const std::string& action,
-            const Poco::JSON::Object& payload,
-            const std::string& uniqueId) {
-            sessionManager.onRemoteCommand(action, payload, uniqueId);
-        });
-
-    // --- Callback: stato connessione Central_System → SessionManager ---
-    protocol->setConnectionStatusCallback(
-        [&](bool connected) {
-            sessionManager.onCentralSystemConnectionChanged(connected);
-        });
-
-    // --- Callback: stato connessione IPC Firmware → SessionManager ---
-    /**
-    ipcClient.setConnectionStatusCallback(
-        [&](bool connected) {
-            sessionManager.onFirmwareConnectionChanged(connected);
-        });
-	*/
-    // --- Callback: aggiornamenti stato SessionManager → WebSocket browser ---
-    sessionManager.setStatusCallback(
-        [&](const SessionManager::ChargePointStatus& status) {
-            WebSocketBroadcaster::instance().sendStatusUpdate(status);
-        });
+    SessionManager sessionManager(*protocol, &eventQueue, &uiQueue, &ipcQueue);
+    WebServer webServer(cfg.httpPort, "web", &eventQueue, &uiQueue);
 
     // --- Gestione segnali ---
     std::signal(SIGINT,  signalHandler);
     std::signal(SIGTERM, signalHandler);
 
+
+    ipcClient.setInQueue(&ipcQueue);
+    ipcClient.setOutQueue(&eventQueue);
+
     // --- Avvio componenti ---
+    sessionManager.start();
+
     ipcClient.start();
     logger.information("IPC client connected to firmware (socket: %s)", cfg.socketPath);
 
@@ -191,6 +142,9 @@ int main(int argc, char* argv[])
 
     // --- Shutdown ---
     logger.information("charge_point_app shutting down...");
+    eventQueue.close();
+    ipcQueue.close();
+    uiQueue.close();
     webServer.stop();
     protocol->disconnect();
     ipcClient.stop();

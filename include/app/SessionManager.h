@@ -8,6 +8,11 @@
  *   - Gestire comandi remoti (RemoteStartTransaction, RemoteStopTransaction)
  *   - Inoltrare comandi dall'interfaccia web al Firmware_Layer via IPC
  *   - Mantenere lo stato corrente (ChargePointStatus) e notificare la UI
+ *     tramite _uiQueue (JSON serializzato)
+ *
+ * Gli eventi vengono accodati in _eventQueue e processati da un thread
+ * dedicato, garantendo serializzazione e disaccoppiamento dai chiamanti.
+ * OcppClient16J e IpcClient pushano direttamente nella _eventQueue.
  *
  * Requisiti validati: 3.4, 3.5, 3.6, 3.7, 3.10, 3.11, 3.12, 3.13, 3.14, 5.1, 7.3, 7.4
  */
@@ -15,15 +20,16 @@
 #define SESSIONMANAGER_H
 
 #include "app/ProtocolAdapter.h"
-#include "common/IIpcSender.h"
+#include "common/ThreadSafeQueue.h"
+#include "common/SessionEvent.h"
 
 #include <string>
-#include <functional>
-#include <Poco/Mutex.h>
 #include <Poco/JSON/Object.h>
 #include <Poco/Logger.h>
+#include <Poco/Thread.h>
+#include <Poco/Runnable.h>
 
-class SessionManager {
+class SessionManager: public Poco::Runnable {
 public:
     /// Stato corrente della colonnina, esposto alla UI.
     struct ChargePointStatus {
@@ -37,88 +43,72 @@ public:
         std::string lastError;
     };
 
-    /**
-     * Costruttore.
-     * @param protocol  Riferimento al ProtocolAdapter (es. OcppClient16J)
-     * @param ipc       Riferimento all'IpcClient per comunicare col Firmware_Layer
-     */
-    SessionManager(ProtocolAdapter& protocol, IIpcSender& ipc);
+    SessionManager(ProtocolAdapter& protocol,
+    		ThreadSafeQueue<SessionEvent>* eventQ,
+			ThreadSafeQueue<std::string>* uiQ,
+			ThreadSafeQueue<std::string>* ipcQ);
 
-    // --- Gestione eventi firmware ---
+    ~SessionManager();
 
-    /// Chiamato quando il Firmware_Layer notifica un cambio stato del connettore.
-    void onConnectorStateChanged(const std::string& newState);
+    // --- Avvio/arresto del thread di processing ---
+    void start();
+    void stop();
 
-    /// Chiamato quando il Firmware_Layer invia un nuovo Meter_Value (Wh).
-    void onMeterValue(int meterValueWh);
+    void run() override;
 
-    /// Chiamato quando il Firmware_Layer notifica un errore hardware.
-    void onError(const std::string& errorType, const std::string& errorCode);
-
-    /// Chiamato quando il Firmware_Layer notifica la risoluzione di un errore.
-    void onErrorCleared();
-
-    /// Chiamato quando lo stato della connessione con il Central_System cambia.
-    void onCentralSystemConnectionChanged(bool connected);
-
-    /// Chiamato quando lo stato della connessione IPC con il Firmware_Layer cambia.
-    void onFirmwareConnectionChanged(bool connected);
-
-    // --- Gestione comandi remoti dal Central_System ---
-
-    /**
-     * Chiamato quando il Central_System invia un CALL (RemoteStartTransaction,
-     * RemoteStopTransaction) tramite il ProtocolAdapter.
-     */
-    void onRemoteCommand(const std::string& action,
-                         const Poco::JSON::Object& payload,
-                         const std::string& uniqueId);
-
-    // --- Gestione risposte OCPP ---
-
-    /**
-     * Chiamato quando il Central_System risponde a un CALL inviato
-     * (Authorize.conf, StartTransaction.conf, ecc.).
-     */
-    void onProtocolResponse(const Poco::JSON::Object& response);
-
-    // --- Comandi dall'interfaccia web ---
-
-    void requestPlugIn();
-    void requestPlugOut();
-    void requestStartCharge(const std::string& idTag);
-    void requestStopCharge();
-    void requestTriggerError(const std::string& errorType);
-    void requestClearError();
-
-    // --- Stato e callback UI ---
-
-    ChargePointStatus getStatus() const;
-
-    using StatusCallback = std::function<void(const ChargePointStatus&)>;
-    void setStatusCallback(StatusCallback cb);
 
 private:
     ProtocolAdapter& _protocol;
-    IIpcSender& _ipc;
-
     ChargePointStatus _status;
-    StatusCallback _statusCallback;
-    mutable Poco::Mutex _mutex;
 
-    // Stato interno per la sequenza Authorize → StartTransaction
+    std::atomic<bool> _running{false};
+
+    // Accesso solo dal thread di processing
     bool _awaitingAuthorize;
     std::string _pendingIdTag;
     int _pendingMeterStart;
 
-    /// Invia un comando IPC al Firmware_Layer.
+    // --- Coda eventi e thread dedicato ---
+    ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
+
+    // --- Coda UI (puntatore, impostato da main_app) ---
+    ThreadSafeQueue<std::string>* _uiQueue = nullptr;
+
+    // --- Coda ipc (puntatore, impostato da main_app) ---
+    ThreadSafeQueue<std::string>* _ipcQueue = nullptr;
+
+    Poco::Thread _eventThread;
+
+    // --- Messaggi ricevuti da ipc ---
+    void handleConnectorStateChanged(const std::string& newState);
+    void handleMeterValue(int meterValueWh);
+    void handleError(const std::string& errorType);
+    void handleErrorCleared();
+    void handleFirmwareConnectionChanged(bool connected);
+
+    // Messaggi ricevuti da OcppClient
+    void handleProtocolResponse(const Poco::JSON::Object& response);
+    void handleRemoteCommand(const std::string& action,
+                                 const Poco::JSON::Object& payload,
+                                 const std::string& uniqueId);
+    void handleCentralSystemConnectionChanged(bool connected);
+
+    // Messaggi ricevuti dall'interfaccia web
+    void handleRequestPlugIn();
+    void handleRequestPlugOut();
+    void handleRequestStartCharge(const std::string& idTag);
+    void handleRequestStopCharge();
+    void handleRequestTriggerError(const std::string& errorType);
+    void handleRequestClearError();
+
+    // Invia aggiornamento all'interfaccia web
+    void notifyStatusUpdate();
+
+    // Invia comandi aipc
     void sendIpcCommand(const std::string& action,
                         const std::string& errorType = "");
 
-    /// Notifica la UI del cambio stato.
-    void notifyStatusUpdate();
-
-    /// Mappa lo stato del connettore all'errorCode OCPP per StatusNotification.
+    std::string serializeStatus(const ChargePointStatus& status) const;
     std::string mapErrorCode(const std::string& connectorState) const;
 };
 
