@@ -3,18 +3,27 @@
 
 #include <Poco/Net/SocketAddress.h>
 #include <Poco/JSON/Parser.h>
-#include <Poco/Logger.h>
 
 #include <sstream>
 #include <thread>
 
-using Poco::Logger;
-
 // ------------------------------------------------------------
 
-IpcClient::IpcClient(const std::string& socketPath)
+IpcClient::IpcClient(const std::string& socketPath,
+		ThreadSafeQueue<std::string>* iq,
+		ThreadSafeQueue<SessionEvent>* oq)
     : _socketPath(socketPath)
+	, _inQueue(iq)
+	, _outQueue(oq)
 {
+	 if (!_inQueue) {
+		 throw std::invalid_argument("inQueue non può essere nullptr");
+	 }
+
+	 if (!_outQueue) {
+		 throw std::invalid_argument("outQueue non può essere nullptr");
+	 }
+
 }
 
 IpcClient::~IpcClient() {
@@ -46,28 +55,15 @@ bool IpcClient::isConnected() const {
 }
 
 // ------------------------------------------------------------
-//Spostare in SessionManager
-/**
-void IpcClient::sendMessage(const Poco::JSON::Object& msg) {
-	if (!_inQueue)
-		return;
-
-    std::ostringstream oss;
-    msg.stringify(oss);
-    _inQueue->push(oss.str() + "\n");
-}
-*/
-// ------------------------------------------------------------
 
 void IpcClient::run() {
-    Logger& logger = Logger::get("IpcClient");
 
     while (_running) {
 
         // --- CONNECT ---
         if (!_connected) {
             if (tryConnect()) {
-                logger.information("IPC connected");
+                _logger.information("IPC connected");
                 notifyConnectionStatus(true);
             } else {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -85,7 +81,7 @@ void IpcClient::run() {
             handleWrite();
 
         } catch (Poco::Exception& e) {
-            logger.warning("IPC error: %s", e.displayText());
+            _logger.warning("IPC error: %s", e.displayText());
 
             closeSocket();
             _connected = false;
@@ -99,7 +95,6 @@ void IpcClient::run() {
 // ------------------------------------------------------------
 
 bool IpcClient::tryConnect() {
-    Logger& logger = Logger::get("IpcClient");
 
     try {
         Poco::Net::SocketAddress addr(_socketPath);
@@ -110,7 +105,7 @@ bool IpcClient::tryConnect() {
         return true;
 
     } catch (Poco::Exception& e) {
-        logger.debug("Connect failed: %s", e.displayText());
+        _logger.debug("Connect failed: %s", e.displayText());
         return false;
     }
 }
@@ -147,17 +142,18 @@ void IpcClient::handleRead() {
 // ------------------------------------------------------------
 
 void IpcClient::handleWrite() {
-	if (!_inQueue) return;
 
     while (auto msg = _inQueue->try_pop()) {
-        _socket.sendBytes(msg->data(), (int)msg->size());
+    	_logger.information("Command from SessionManager: %s", msg.value());
+    	std::string& message = msg.value();
+    	message += '\n';
+        _socket.sendBytes(message.data(), (int)message.size());
     }
 }
 
 // ------------------------------------------------------------
 
 void IpcClient::notifyConnectionStatus(bool connected) {
-    if (!_outQueue) return;
 
     SessionEvent evt;
     evt.type = SessionEvent::Type::FirmwareConnection;
@@ -169,22 +165,21 @@ void IpcClient::notifyConnectionStatus(bool connected) {
 // ------------------------------------------------------------
 
 void IpcClient::processLine(const std::string& line) {
-    Logger& logger = Logger::get("IpcClient");
+
+    _logger.information("Message from firmware: %s",line);
 
     Poco::JSON::Object::Ptr obj;
 
     try {
         obj = IpcMessage::parseJson(line);
     } catch (...) {
-        logger.error("Invalid JSON: %s", line);
+        _logger.error("Invalid JSON: %s", line);
         return;
     }
 
     if (!obj->has("type")) return;
 
     std::string type = obj->getValue<std::string>("type");
-
-    if (!_outQueue) return;
 
     SessionEvent evt;
 

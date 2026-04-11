@@ -15,6 +15,9 @@
 #ifndef OCPPCLIENT16J_H
 #define OCPPCLIENT16J_H
 
+#include "common/ThreadSafeQueue.h"
+#include "common/SessionEvent.h"
+#include "common/CentralSystemEvent.h"
 #include "app/ProtocolAdapter.h"
 #include "app/OcppMessageSerializer16J.h"
 
@@ -30,11 +33,10 @@
 #include <Poco/Net/HTTPResponse.h>
 #include <Poco/Thread.h>
 #include <Poco/Timer.h>
-#include <Poco/Mutex.h>
 #include <Poco/Runnable.h>
 #include <Poco/JSON/Object.h>
 
-class OcppClient16J : public ProtocolAdapter {
+class OcppClient16J : public ProtocolAdapter, public Poco::Runnable  {
 public:
     /**
      * Costruttore.
@@ -42,50 +44,51 @@ public:
      * @param chargePointId     Identificativo della colonnina
      */
     OcppClient16J(const std::string& centralSystemUrl,
-                  const std::string& chargePointId);
+                  const std::string& chargePointId,
+				  ThreadSafeQueue<SessionEvent>* eventQ,
+				  ThreadSafeQueue<CentralSystemEvent>* csysQueue);
 
     ~OcppClient16J() override;
 
-    // --- ProtocolAdapter interface ---
-    void connect() override;
-    void disconnect() override;
-    bool isConnected() const override;
+    void start() override;
+    void stop() override;
+
+    void run() override;
+
+    bool tryConnect();
+    bool isConnected() const;
 
     void sendBootNotification(
         const std::string& chargePointModel,
-        const std::string& chargePointVendor) override;
+        const std::string& chargePointVendor);
 
-    void sendHeartbeat() override;
+    void sendHeartbeat();
 
-    void sendAuthorize(const std::string& idTag) override;
+    void sendAuthorize(const std::string& idTag);
 
     void sendStatusNotification(
         int connectorId,
         const std::string& status,
-        const std::string& errorCode) override;
+        const std::string& errorCode);
 
     void sendStartTransaction(
         int connectorId,
         const std::string& idTag,
-        int meterStart) override;
+        int meterStart);
 
     void sendMeterValues(
         int connectorId,
         int transactionId,
-        int meterValue) override;
+        int meterValue);
 
     void sendStopTransaction(
         int transactionId,
         int meterStop,
-        const std::string& reason) override;
-
-    void setResponseCallback(ResponseCallback cb) override;
-    void setRemoteCommandCallback(RemoteCommandCallback cb) override;
-    void setConnectionStatusCallback(ConnectionStatusCallback cb) override;
+        const std::string& reason);
 
     void sendCallResult(
         const std::string& uniqueId,
-        const Poco::JSON::Object& payload) override;
+        const Poco::JSON::Object& payload);
 
 private:
     std::string _url;
@@ -97,14 +100,8 @@ private:
     std::unique_ptr<Poco::Net::HTTPClientSession> _session;
     std::unique_ptr<Poco::Net::WebSocket> _ws;
 
-    std::atomic<bool> _connected;
-    std::atomic<bool> _running;
-
-    ResponseCallback _responseCallback;
-    RemoteCommandCallback _remoteCommandCallback;
-    ConnectionStatusCallback _connectionStatusCallback;
-    mutable Poco::Mutex _mutex;
-    mutable Poco::Mutex _wsMutex;  // protects WebSocket send
+    std::atomic<bool> _connected{false};
+    std::atomic<bool> _running{false};
 
     // Heartbeat timer
     Poco::Timer _heartbeatTimer;
@@ -121,19 +118,10 @@ private:
 
     // Pending CALL tracking: uniqueId → action name
     std::map<std::string, std::string> _pendingCalls;
-    Poco::Mutex _pendingMutex;
 
-    // --- Receive thread ---
-    class ReceiveRunnable : public Poco::Runnable {
-    public:
-        explicit ReceiveRunnable(OcppClient16J& client);
-        void run() override;
-    private:
-        OcppClient16J& _client;
-    };
-
-    ReceiveRunnable _receiveRunnable;
-    Poco::Thread _receiveThread;
+    Poco::Thread _thread;
+    ThreadSafeQueue<SessionEvent>* _eventQueue;
+    ThreadSafeQueue<CentralSystemEvent>* _csysQueue;
 
     // --- Internal methods ---
 
@@ -145,9 +133,6 @@ private:
 
     /// Invia dati raw sul WebSocket (thread-safe).
     void sendRaw(const std::string& data);
-
-    /// Loop di ricezione messaggi dal Central_System.
-    void receiveLoop();
 
     /// Gestisce un CALLRESULT ricevuto.
     void handleCallResult(const std::string& uniqueId,

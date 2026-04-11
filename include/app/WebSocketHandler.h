@@ -19,6 +19,8 @@
 #include <Poco/JSON/Object.h>
 #include <Poco/Logger.h>
 
+using Poco::Logger;
+
 
 class WebSocketHandler : public Poco::Net::HTTPRequestHandler {
 public:
@@ -30,6 +32,8 @@ public:
 private:
     ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
     ThreadSafeQueue<std::string>* _uiQueue = nullptr;
+
+    Logger& _logger = Logger::get("WebSocketHandler");
 
     void processCommand(const std::string& json);
 

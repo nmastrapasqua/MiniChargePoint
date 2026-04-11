@@ -21,7 +21,6 @@
 
 #include <sstream>
 
-using Poco::Logger;
 using Poco::Net::WebSocket;
 
 // ---------------------------------------------------------------------------
@@ -44,13 +43,11 @@ WebSocketHandler::WebSocketHandler(ThreadSafeQueue<SessionEvent>* q, ThreadSafeQ
 void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
                                      Poco::Net::HTTPServerResponse& response)
 {
-    Logger& logger = Logger::get("WebSocketHandler");
-
     try {
         WebSocket ws(request, response);
         ws.setReceiveTimeout(Poco::Timespan(0, 100000)); // 100 ms
 
-        logger.information("Browser WebSocket connected");
+        _logger.information("Browser WebSocket connected");
 
         // Richiede l'aggiornamento dello stato
         SessionEvent evt;
@@ -67,7 +64,7 @@ void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
 
         	// Riceve l'aggiornameto dello stato
         	while (auto msg = _uiQueue->try_pop()) {
-        		logger.information("Aggiornamento stato %s", msg.value());
+        		_logger.debug("Status update %s", msg.value());
         		ws.sendFrame(msg->data(), (int)msg->size());
         	}
 
@@ -88,18 +85,17 @@ void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
             }
         }
 
-        logger.information("Browser WebSocket disconnected");
+        _logger.information("Browser WebSocket disconnected");
 
     } catch (Poco::Net::WebSocketException& ex) {
-        logger.error("WebSocket error: %s", ex.displayText());
+        _logger.error("WebSocket error: %s", ex.displayText());
     } catch (Poco::Exception& ex) {
-        logger.error("WebSocket handler error: %s", ex.displayText());
+        _logger.error("WebSocket handler error: %s", ex.displayText());
     }
 }
 
 void WebSocketHandler::processCommand(const std::string& json)
 {
-    Logger& logger = Logger::get("WebSocketHandler");
 
     try {
         Poco::JSON::Parser parser;
@@ -107,12 +103,12 @@ void WebSocketHandler::processCommand(const std::string& json)
         Poco::JSON::Object::Ptr obj = result.extract<Poco::JSON::Object::Ptr>();
 
         if (!obj->has("command")) {
-            logger.warning("WebSocket command missing 'command' field: %s", json);
+            _logger.warning("WebSocket command missing 'command' field: %s", json);
             return;
         }
 
         std::string command = obj->getValue<std::string>("command");
-        logger.debug("Browser command received: %s", command);
+        _logger.debug("Browser command received: %s", command);
 
         if (command == "plug_in") {
             SessionEvent evt;
@@ -149,11 +145,11 @@ void WebSocketHandler::processCommand(const std::string& json)
             evt.type = SessionEvent::Type::WebClearError;
             _eventQueue->push(std::move(evt));
         } else {
-            logger.warning("Unknown WebSocket command: %s", command);
+            _logger.warning("Unknown WebSocket command: %s", command);
         }
 
     } catch (Poco::Exception& ex) {
-        logger.error("Failed to parse WebSocket command: %s", ex.displayText());
+        _logger.error("Failed to parse WebSocket command: %s", ex.displayText());
     }
 }
 

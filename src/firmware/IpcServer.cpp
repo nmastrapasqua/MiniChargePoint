@@ -225,6 +225,7 @@ void IpcServer::readLoop()
 void IpcServer::processLine(const std::string& line)
 {
     Logger& logger = Logger::get("IpcServer");
+    logger.information("Command from Application_Layer: %s", line);
 
     // Parse JSON
     Poco::JSON::Object::Ptr obj;

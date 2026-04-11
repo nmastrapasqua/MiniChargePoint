@@ -29,17 +29,17 @@ using Poco::Logger;
 // Costruttore / Distruttore
 // ---------------------------------------------------------------------------
 
-SessionManager::SessionManager(ProtocolAdapter& protocol,
-		ThreadSafeQueue<SessionEvent>* eventQ,
+SessionManager::SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
 		ThreadSafeQueue<std::string>* uiQ,
-		ThreadSafeQueue<std::string>* ipcQ)
-    : _protocol(protocol)
-    , _awaitingAuthorize(false)
+		ThreadSafeQueue<std::string>* ipcQ,
+		ThreadSafeQueue<CentralSystemEvent>* csysQueue)
+    : _awaitingAuthorize(false)
 	, _pendingIdTag("")
     , _pendingMeterStart(0)
 	, _eventQueue(eventQ)
 	, _uiQueue(uiQ)
 	, _ipcQueue(ipcQ)
+	, _csysQueue(csysQueue)
 {
     _status.connectorState = "Available";
     _status.currentMeterValue = 0;
@@ -60,6 +60,10 @@ SessionManager::SessionManager(ProtocolAdapter& protocol,
 
     if (!_ipcQueue) {
     	throw std::invalid_argument("ipcQueue non può essere nullptr");
+    }
+
+    if (!_csysQueue) {
+        	throw std::invalid_argument("csysQueue non può essere nullptr");
     }
 }
 
@@ -158,13 +162,9 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState)
     Logger& logger = Logger::get("SessionManager");
     logger.information("Connector state changed to: %s", newState);
 
-    bool wasCharging = false;
-    int txId = -1;
-    int meterStop = 0;
-
-    wasCharging = _status.isCharging;
-    txId = _status.transactionId;
-    meterStop = _status.currentMeterValue;
+    bool wasCharging = _status.isCharging;
+    int txId = _status.transactionId;
+    int meterStop = _status.currentMeterValue;
 
     _status.connectorState = newState;
 
@@ -183,16 +183,31 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState)
     }
 
     std::string errorCode = mapErrorCode(newState);
-    _protocol.sendStatusNotification(1, newState, errorCode);
+    CentralSystemEvent statusEvt;
+    statusEvt.type = CentralSystemEvent::Type::StatusNotification;
+    statusEvt.connectorId = 1;
+    statusEvt.status = newState;
+    statusEvt.errorCode = errorCode;
+    _csysQueue->push(std::move(statusEvt));
 
     if (wasCharging && newState == "Faulted" && txId >= 0) {
         logger.warning("Fault during active session (txId=%d) — sending StopTransaction with EmergencyStop", txId);
-        _protocol.sendStopTransaction(txId, meterStop, "EmergencyStop");
+        CentralSystemEvent stopEvt;
+        stopEvt.type = CentralSystemEvent::Type::StopTransaction;
+        stopEvt.transactionId = txId;
+        stopEvt.meterValue = meterStop;
+        stopEvt.reason = "EmergencyStop";
+        _csysQueue->push(std::move(stopEvt));
     }
 
     if (wasCharging && newState == "Finishing" && txId >= 0) {
         logger.information("Charging session ending (txId=%d), sending StopTransaction", txId);
-        _protocol.sendStopTransaction(txId, meterStop, "Local");
+        CentralSystemEvent stopLocalEvt;
+        stopLocalEvt.type = CentralSystemEvent::Type::StopTransaction;
+        stopLocalEvt.transactionId = txId;
+        stopLocalEvt.meterValue = meterStop;
+        stopLocalEvt.reason = "Local";
+        _csysQueue->push(std::move(stopLocalEvt));
     }
 
     notifyStatusUpdate();
@@ -202,16 +217,19 @@ void SessionManager::handleMeterValue(int meterValueWh)
 {
     Logger& logger = Logger::get("SessionManager");
 
-    int txId = -1;
-    bool charging = false;
+    int txId = _status.transactionId;
+    bool charging = _status.isCharging;
 
     _status.currentMeterValue = meterValueWh;
-    txId = _status.transactionId;
-    charging = _status.isCharging;
 
     if (charging && txId >= 0) {
         logger.debug("Forwarding MeterValue %d Wh (txId=%d)", meterValueWh, txId);
-        _protocol.sendMeterValues(1, txId, meterValueWh);
+        CentralSystemEvent meterEvt;
+        meterEvt.type = CentralSystemEvent::Type::MeterValues;
+        meterEvt.connectorId = 1;
+        meterEvt.transactionId = txId;
+        meterEvt.meterValue = meterValueWh;
+        _csysQueue->push(std::move(meterEvt));
     }
 
     notifyStatusUpdate();
@@ -283,7 +301,11 @@ void SessionManager::handleRemoteCommand(const std::string& action,
 
         if (connState == "Available") {
             response.set("status", "Accepted");
-            _protocol.sendCallResult(uniqueId, response);
+            CentralSystemEvent acceptedEvt;
+            acceptedEvt.type = CentralSystemEvent::Type::CallResult;
+            acceptedEvt.uniqueId = uniqueId;
+            acceptedEvt.payload = response;
+            _csysQueue->push(std::move(acceptedEvt));
 
             std::string idTag = "UNKNOWN";
             if (payload.has("idTag")) {
@@ -297,11 +319,18 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             _awaitingAuthorize = true;
             _pendingIdTag = idTag;
             _pendingMeterStart = meterStart;
-            _protocol.sendAuthorize(idTag);
+            CentralSystemEvent authEvt;
+            authEvt.type = CentralSystemEvent::Type::Authorize;
+            authEvt.idTag = idTag;
+            _csysQueue->push(std::move(authEvt));
         } else {
             logger.warning("RemoteStartTransaction rejected: connector is %s", connState);
             response.set("status", "Rejected");
-            _protocol.sendCallResult(uniqueId, response);
+            CentralSystemEvent rejEvt;
+            rejEvt.type = CentralSystemEvent::Type::CallResult;
+            rejEvt.uniqueId = uniqueId;
+            rejEvt.payload = response;
+            _csysQueue->push(std::move(rejEvt));
         }
 
     } else if (action == "RemoteStopTransaction") {
@@ -316,7 +345,11 @@ void SessionManager::handleRemoteCommand(const std::string& action,
 
         if (requestedTxId >= 0 && requestedTxId == currentTxId) {
             response.set("status", "Accepted");
-            _protocol.sendCallResult(uniqueId, response);
+            CentralSystemEvent acceptedEvt;
+            acceptedEvt.type = CentralSystemEvent::Type::CallResult;
+            acceptedEvt.uniqueId = uniqueId;
+            acceptedEvt.payload = response;
+            _csysQueue->push(std::move(acceptedEvt));
 
             sendIpcCommand("stop_charge");
             sendIpcCommand("plug_out");
@@ -324,7 +357,11 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             logger.warning("RemoteStopTransaction rejected: requested txId=%d, current txId=%d",
                            requestedTxId, currentTxId);
             response.set("status", "Rejected");
-            _protocol.sendCallResult(uniqueId, response);
+            CentralSystemEvent rejEvt;
+            rejEvt.type = CentralSystemEvent::Type::CallResult;
+            rejEvt.uniqueId = uniqueId;
+            rejEvt.payload = response;
+            _csysQueue->push(std::move(rejEvt));
         }
 
     } else {
@@ -365,7 +402,12 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
             logger.information("Authorize accepted for idTag: %s", _pendingIdTag);
 
             sendIpcCommand("start_charge");
-            _protocol.sendStartTransaction(1, _pendingIdTag, _pendingMeterStart);
+            CentralSystemEvent startEvt;
+            startEvt.type = CentralSystemEvent::Type::StartTransaction;
+            startEvt.connectorId = 1;
+            startEvt.idTag = _pendingIdTag;
+            startEvt.meterValue = _pendingMeterStart;
+            _csysQueue->push(std::move(startEvt));
             _status.idTag = _pendingIdTag;
 
         } else {
@@ -421,7 +463,10 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
     _pendingIdTag = idTag;
     _pendingMeterStart = _status.currentMeterValue;
 
-    _protocol.sendAuthorize(idTag);
+    CentralSystemEvent authEvt;
+    authEvt.type = CentralSystemEvent::Type::Authorize;
+    authEvt.idTag = idTag;
+    _csysQueue->push(std::move(authEvt));
 }
 
 void SessionManager::handleRequestStopCharge()
@@ -467,8 +512,6 @@ void SessionManager::sendIpcCommand(const std::string& action,
 
 void SessionManager::notifyStatusUpdate()
 {
-	Logger& logger = Logger::get("SessionManager");
-	logger.information("Ricevuto notifyStatusUpdate");
 
     _uiQueue->push(serializeStatus(_status));
 }

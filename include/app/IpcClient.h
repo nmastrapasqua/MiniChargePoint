@@ -1,33 +1,32 @@
 #ifndef IPCCLIENT_H
 #define IPCCLIENT_H
 
-#include <string>
-#include <atomic>
+#include "common/ThreadSafeQueue.h"
+#include "common/SessionEvent.h"
 
 #include <Poco/Net/StreamSocket.h>
 #include <Poco/Thread.h>
 #include <Poco/Runnable.h>
 #include <Poco/JSON/Object.h>
+#include <Poco/Logger.h>
 
-//#include "common/IIpcSender.h"
-#include "common/ThreadSafeQueue.h"
-#include "common/SessionEvent.h"
+#include <string>
+#include <atomic>
 
-class IpcClient : /* public IIpcSender, */ public Poco::Runnable {
+using Poco::Logger;
+
+
+class IpcClient : public Poco::Runnable {
 public:
-    explicit IpcClient(const std::string& socketPath);
+    explicit IpcClient(const std::string& socketPath,
+    		ThreadSafeQueue<std::string>* iq,
+    		ThreadSafeQueue<SessionEvent>* oq);
     ~IpcClient();
 
     void start();
     void stop();
 
     bool isConnected() const;
-
-    //void sendMessage(const Poco::JSON::Object& msg) override;
-
-    void setInQueue(ThreadSafeQueue<std::string>* q) { _inQueue = q; }
-
-    void setOutQueue(ThreadSafeQueue<SessionEvent>* q) { _outQueue = q; }
 
     void run() override;
 
@@ -45,6 +44,10 @@ private:
 
     ThreadSafeQueue<SessionEvent>* _outQueue = nullptr;
 
+    std::string _buffer;
+
+    Logger& _logger = Logger::get("IpcClient");
+
     // --- internal ---
     bool tryConnect();
     void closeSocket();
@@ -54,7 +57,6 @@ private:
     void handleWrite();
     void processLine(const std::string& line);
 
-    std::string _buffer;
 };
 
 #endif

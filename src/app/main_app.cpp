@@ -52,7 +52,7 @@ static int parseLogLevel(const std::string& level)
 static void setupLogging(const ConfigManager::Config& cfg)
 {
     Poco::AutoPtr<Poco::PatternFormatter> formatter(new Poco::PatternFormatter);
-    formatter->setProperty("pattern", "%Y-%m-%d %H:%M:%S.%i [%p] %s: %t");
+    formatter->setProperty("pattern", "%Y-%m-%d %H:%M:%S [%q] [%T] %s: %t");
 
     Poco::AutoPtr<Poco::ConsoleChannel> consoleChannel(new Poco::ConsoleChannel);
     Poco::AutoPtr<Poco::FileChannel> fileChannel(new Poco::FileChannel);
@@ -73,11 +73,13 @@ static void setupLogging(const ConfigManager::Config& cfg)
 /// Crea il ProtocolAdapter in base al campo "protocol" della configurazione.
 /// Per ora supporta solo "ocpp1.6j"; altri protocolli possono essere aggiunti qui.
 static std::unique_ptr<ProtocolAdapter> createProtocolAdapter(
-    const ConfigManager::Config& cfg)
+    const ConfigManager::Config& cfg,
+	ThreadSafeQueue<SessionEvent>* eventQ,
+	ThreadSafeQueue<CentralSystemEvent>* csysQueue)
 {
     if (cfg.protocol == "ocpp1.6j") {
         return std::unique_ptr<ProtocolAdapter>(
-            new OcppClient16J(cfg.centralSystemUrl, cfg.chargePointId));
+            new OcppClient16J(cfg.centralSystemUrl, cfg.chargePointId, eventQ, csysQueue));
     }
     // Aggiungere qui eventuali altri protocolli, es.:
     // if (cfg.protocol == "ocpp2.0.1") {
@@ -105,33 +107,23 @@ int main(int argc, char* argv[])
     ThreadSafeQueue<SessionEvent> eventQueue;
     ThreadSafeQueue<std::string> uiQueue;
     ThreadSafeQueue<std::string> ipcQueue;
+    ThreadSafeQueue<CentralSystemEvent> csysQueue;
 
     // --- Componenti ---
-    IpcClient ipcClient(cfg.socketPath);
-    std::unique_ptr<ProtocolAdapter> protocol = createProtocolAdapter(cfg);
-    SessionManager sessionManager(*protocol, &eventQueue, &uiQueue, &ipcQueue);
+    IpcClient ipcClient(cfg.socketPath, &ipcQueue, &eventQueue);
+    std::unique_ptr<ProtocolAdapter> protocol = createProtocolAdapter(cfg, &eventQueue, &csysQueue);
+    SessionManager sessionManager(&eventQueue, &uiQueue, &ipcQueue, &csysQueue);
     WebServer webServer(cfg.httpPort, "web", &eventQueue, &uiQueue);
 
     // --- Gestione segnali ---
     std::signal(SIGINT,  signalHandler);
     std::signal(SIGTERM, signalHandler);
 
-
-    ipcClient.setInQueue(&ipcQueue);
-    ipcClient.setOutQueue(&eventQueue);
-
     // --- Avvio componenti ---
     sessionManager.start();
-
     ipcClient.start();
-    logger.information("IPC client connected to firmware (socket: %s)", cfg.socketPath);
-
-    protocol->connect();
-    protocol->sendBootNotification("MiniChargePoint", "MiniCP");
-    logger.information("Protocol adapter connected (%s), BootNotification sent", cfg.protocol);
-
+    protocol->start();
     webServer.start();
-    logger.information("Web server started on port %d", cfg.httpPort);
 
     logger.information("charge_point_app running. Press Ctrl+C to stop.");
 
@@ -146,7 +138,7 @@ int main(int argc, char* argv[])
     ipcQueue.close();
     uiQueue.close();
     webServer.stop();
-    protocol->disconnect();
+    protocol->stop();
     ipcClient.stop();
     logger.information("charge_point_app stopped.");
 

@@ -19,9 +19,9 @@
 #ifndef SESSIONMANAGER_H
 #define SESSIONMANAGER_H
 
-#include "app/ProtocolAdapter.h"
 #include "common/ThreadSafeQueue.h"
 #include "common/SessionEvent.h"
+#include "common/CentralSystemEvent.h"
 
 #include <string>
 #include <Poco/JSON/Object.h>
@@ -43,10 +43,10 @@ public:
         std::string lastError;
     };
 
-    SessionManager(ProtocolAdapter& protocol,
-    		ThreadSafeQueue<SessionEvent>* eventQ,
+    SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
 			ThreadSafeQueue<std::string>* uiQ,
-			ThreadSafeQueue<std::string>* ipcQ);
+			ThreadSafeQueue<std::string>* ipcQ,
+			ThreadSafeQueue<CentralSystemEvent>* csysQueue);
 
     ~SessionManager();
 
@@ -58,7 +58,6 @@ public:
 
 
 private:
-    ProtocolAdapter& _protocol;
     ChargePointStatus _status;
 
     std::atomic<bool> _running{false};
@@ -76,6 +75,9 @@ private:
 
     // --- Coda ipc (puntatore, impostato da main_app) ---
     ThreadSafeQueue<std::string>* _ipcQueue = nullptr;
+
+    // --- Coda per comunicazione con Central System
+    ThreadSafeQueue<CentralSystemEvent>* _csysQueue = nullptr;
 
     Poco::Thread _eventThread;
 
