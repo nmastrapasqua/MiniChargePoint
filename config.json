@@ -5,7 +5,7 @@
     "httpPort": 9090,
     "meterInterval": 10,
     "defaultIdTag": "TESTIDTAG1",
-    "logLevel": "information",
+    "logLevel": "debug",
     "logFile": "minichargepoint.log",
     "protocol": "ocpp1.6j"
 }

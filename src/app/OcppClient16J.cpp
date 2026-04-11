@@ -6,16 +6,12 @@
  * e riconnessione automatica.
  *
  * Thread:
- *   - receiveThread: ricezione continua di messaggi dal Central_System
- *   - heartbeatTimer: invio periodico di Heartbeat
- *   - reconnectTimer: tentativo di riconnessione ogni 10 secondi
- *
- * Requisiti validati: 3.1–3.15, 5.3, 9.3
+ *   - _thread: elaborazione continua di messaggi dal Central_System e da SessionManager
+ *   - _heartbeatTimer: invio periodico di Heartbeat
  */
 #include "app/OcppClient16J.h"
 
 #include <sstream>
-#include <Poco/Logger.h>
 #include <Poco/Exception.h>
 #include <Poco/URI.h>
 #include <Poco/Net/HTTPRequest.h>
@@ -24,7 +20,6 @@
 #include <Poco/Timestamp.h>
 #include <Poco/Net/WebSocket.h>
 
-using Poco::Logger;
 using Poco::Net::WebSocket;
 
 // ---------------------------------------------------------------------------
@@ -43,11 +38,7 @@ OcppClient16J::OcppClient16J(const std::string& centralSystemUrl,
     , _connected(false)
     , _running(false)
     , _heartbeatTimer(0, 0)
-    , _heartbeatInterval(0)
-    , _heartbeatTimerStarted(false)
-    , _reconnectTimer(0, 0)
-    , _reconnectNeeded(false)
-    , _reconnectTimerStarted(false)
+    , _heartbeatActive(false)
     , _uniqueIdCounter(1)
 	, _eventQueue(eventQ)
 	, _csysQueue(csysQueue)
@@ -67,6 +58,13 @@ OcppClient16J::~OcppClient16J()
     stop();
 }
 
+void OcppClient16J::closeSocket() {
+	if (_ws) {
+		try { _ws->close(); } catch (...) {}
+		_ws.reset();
+	}
+}
+
 void OcppClient16J::start() {
     if (_running) return;
     _running = true;
@@ -82,17 +80,11 @@ void OcppClient16J::stop() {
 
     stopHeartbeat();
 
-    if (_ws) {
-    	try { _ws->close(); } catch (...) {}
-    	_ws.reset();
-    }
-    _session.reset();
+    closeSocket();
+
 }
 
 void OcppClient16J::run() {
-
-	Logger& logger = Logger::get("OcppClient");
-	char buffer[4096];
 
 	while (_running) {
 
@@ -106,43 +98,100 @@ void OcppClient16J::run() {
 			}
 		}
 
-		// --- READ Messaggi da Central System
+		eventLoop();
+		handleDisconnect();
+	}
+}
+
+void OcppClient16J::eventLoop() {
+	char buffer[2048];
+	int flags;
+
+	while (_running && _connected) {
 		try {
-			int flags = 0;
-			int n = 0;
-
-			n = _ws->receiveFrame(buffer, sizeof(buffer), flags);
-
-			if (n <= 0 || (flags & WebSocket::FRAME_OP_BITMASK) == WebSocket::FRAME_OP_CLOSE) {
-				_connected = false;
-			}
-
-			if ((flags & WebSocket::FRAME_OP_BITMASK) == WebSocket::FRAME_OP_TEXT) {
-				std::string msg(buffer, n);
-				logger.information("Received: %s", msg);
-				auto ocppMsg = OcppMessageSerializer16J::deserialize(msg);
-				switch (ocppMsg.type) {
-					case OcppMessageSerializer16J::MessageType::CALLRESULT:
-						handleCallResult(ocppMsg.uniqueId, ocppMsg.payload);
-				        break;
-					case OcppMessageSerializer16J::MessageType::CALLERROR:
-						handleCallError(ocppMsg.uniqueId, ocppMsg.errorCode, ocppMsg.errorDescription);
-				        break;
-					case OcppMessageSerializer16J::MessageType::CALL:
-						handleIncomingCall(ocppMsg.uniqueId, ocppMsg.action, ocppMsg.payload);
-				        break;
+			// --- Elabora i messaggi da SessionManager
+			while (auto evt = _csysQueue->try_pop()) {
+				switch (evt->type) {
+				case CentralSystemEvent::Type::StatusNotification:
+					sendStatusNotification(evt->connectorId, evt->status, evt->errorCode);
+					break;
+				case CentralSystemEvent::Type::StartTransaction:
+					sendStartTransaction(evt->connectorId, evt->idTag, evt->meterValue);
+					break;
+				case CentralSystemEvent::Type::StopTransaction:
+					sendStopTransaction(evt->transactionId, evt->meterValue, evt->reason);
+					break;
+				case CentralSystemEvent::Type::MeterValues:
+					sendMeterValues(evt->connectorId, evt->transactionId, evt->meterValue);
+					break;
+				case CentralSystemEvent::Type::CallResult:
+					sendCallResult(evt->uniqueId, evt->payload);
+					break;
+				case CentralSystemEvent::Type::Authorize:
+					sendAuthorize(evt->idTag);
+					break;
+				default:
+					sendHeartbeat();
 				}
 			}
 
-		} catch (Poco::TimeoutException& e) {
-			// Receive timeout — normal, just loop
-			continue;
-		} catch (Poco::Exception& e) {
-			logger.warning("Receive error: %s", e.displayText());
-			_connected = false;
-		}
+			// --- Elabora i messaggi da Central System
+			int n = _ws->receiveFrame(buffer, sizeof(buffer), flags);
 
+			if (n <= 0 || (flags & WebSocket::FRAME_OP_BITMASK) == WebSocket::FRAME_OP_CLOSE) break;
+
+			if ((flags & WebSocket::FRAME_OP_BITMASK) == WebSocket::FRAME_OP_TEXT) {
+				std::string message(buffer, n);
+				_logger.information("Received: %s", message);
+				// Parse the OCPP message
+				try {
+					auto ocppMsg = OcppMessageSerializer16J::deserialize(message);
+
+					switch (ocppMsg.type) {
+					case OcppMessageSerializer16J::MessageType::CALLRESULT:
+						handleCallResult(ocppMsg.uniqueId, ocppMsg.payload);
+						break;
+					case OcppMessageSerializer16J::MessageType::CALLERROR:
+						handleCallError(ocppMsg.uniqueId, ocppMsg.errorCode,
+										ocppMsg.errorDescription);
+						break;
+					case OcppMessageSerializer16J::MessageType::CALL:
+						handleIncomingCall(ocppMsg.uniqueId, ocppMsg.action,
+										  ocppMsg.payload);
+						break;
+					}
+				} catch (OcppMessageSerializer16J::OcppParseError& e) {
+					_logger.error("Invalid OCPP message received: %s — %s", message, std::string(e.what()));
+					// Send CALLERROR back
+					OcppMessageSerializer16J::OcppMessage errMsg;
+					errMsg.type = OcppMessageSerializer16J::MessageType::CALLERROR;
+					errMsg.uniqueId = "0";
+					errMsg.errorCode = "FormationViolation";
+					errMsg.errorDescription = e.what();
+					sendRaw(OcppMessageSerializer16J::serialize(errMsg));
+				}
+		    }
+
+		} catch (Poco::TimeoutException&) {
+			continue; // normale
+		} catch (const Poco::Exception& e) {
+			_logger.warning("Receive error: %s", e.displayText());
+			break;
+		}
 	}
+
+}
+
+void OcppClient16J::handleDisconnect() {
+	stopHeartbeat();
+    closeSocket();
+    _connected = false;
+    notifyConnectionStatus(false);
+
+    if (_running) {
+        _logger.information("Reconnecting in 5 seconds...");
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,41 +226,29 @@ void OcppClient16J::parseUrl(const std::string& url)
 
 bool OcppClient16J::tryConnect()
 {
-    Logger& logger = Logger::get("OcppClient");
 
     try {
-        logger.debug("Connecting to Central_System at %s (host=%s, port=%hu, path=%s)",
+        _logger.debug("Connecting to Central_System at %s (host=%s, port=%hu, path=%s)",
                            _url, _host, _port, _path);
 
-        _session.reset(new Poco::Net::HTTPClientSession(_host, _port));
-        _session->setTimeout(Poco::Timespan(30, 0));
-
-        Poco::Net::HTTPRequest request(Poco::Net::HTTPRequest::HTTP_GET, _path,
-                                       Poco::Net::HTTPRequest::HTTP_1_1);
+        Poco::Net::HTTPClientSession session(_host, _port);
+        Poco::Net::HTTPRequest request(Poco::Net::HTTPRequest::HTTP_GET, _path, Poco::Net::HTTPRequest::HTTP_1_1);
         request.set("Sec-WebSocket-Protocol", "ocpp1.6");
-
         Poco::Net::HTTPResponse response;
-        _ws.reset(new Poco::Net::WebSocket(*_session, request, response));
+
+        _ws = std::make_unique<Poco::Net::WebSocket>(session, request, response);
         _ws->setReceiveTimeout(Poco::Timespan(0, 100000)); // 100 ms
 
         _connected = true;
-        logger.information("WebSocket connection established with Central_System");
+        _logger.information("WebSocket connection established with Central_System");
         return true;
     } catch (Poco::Exception& e) {
-        logger.warning("Failed to connect to Central_System: %s", e.displayText());
+        _logger.warning("Failed to connect to Central_System: %s", e.displayText());
+        _connected = false;
         return false;
     }
 }
 
-
-// ---------------------------------------------------------------------------
-// isConnected
-// ---------------------------------------------------------------------------
-
-bool OcppClient16J::isConnected() const
-{
-    return _connected;
-}
 
 // ---------------------------------------------------------------------------
 // sendBootNotification
@@ -345,8 +382,7 @@ void OcppClient16J::sendCallResult(const std::string& uniqueId,
 
     std::string json = OcppMessageSerializer16J::serialize(msg);
 
-    Logger& logger = Logger::get("OcppClient");
-    logger.debug("Sending CALLRESULT: %s", json);
+    _logger.information("Sending CALLRESULT: %s", json);
 
     sendRaw(json);
 }
@@ -370,8 +406,7 @@ void OcppClient16J::sendCall(const std::string& action,
 
     _pendingCalls[uid] = action;
 
-    Logger& logger = Logger::get("OcppClient");
-    logger.information("Sending CALL [%s] %s: %s", uid, action, json);
+    _logger.information("Sending CALL %s", json);
 
     sendRaw(json);
 }
@@ -384,26 +419,12 @@ void OcppClient16J::sendRaw(const std::string& data)
 {
 
     if (!_ws || !_connected) {
-        Logger& logger = Logger::get("OcppClient");
-        logger.warning("Cannot send message: not connected");
+        _logger.warning("Cannot send message: not connected");
         return;
     }
 
-    try {
-        _ws->sendFrame(data.data(), static_cast<int>(data.size()),
-                       Poco::Net::WebSocket::FRAME_TEXT);
-    } catch (Poco::Exception& e) {
-        Logger& logger = Logger::get("OcppClient");
-        logger.warning("Send failed: %s", e.displayText());
-        _connected = false;
-        notifyConnectionStatus(false);
-    }
+    _ws->sendFrame(data.data(), static_cast<int>(data.size()), Poco::Net::WebSocket::FRAME_TEXT);
 }
-
-// ---------------------------------------------------------------------------
-// receiveLoop — Thread dedicato per ricezione messaggi
-// ---------------------------------------------------------------------------
-
 
 
 // ---------------------------------------------------------------------------
@@ -413,8 +434,6 @@ void OcppClient16J::sendRaw(const std::string& data)
 void OcppClient16J::handleCallResult(const std::string& uniqueId,
                                   const Poco::JSON::Object& payload)
 {
-    Logger& logger = Logger::get("OcppClient");
-
     // Find the original action for this uniqueId
     std::string action;
 
@@ -425,19 +444,15 @@ void OcppClient16J::handleCallResult(const std::string& uniqueId,
     }
 
 
-    logger.debug("CALLRESULT [%s] for action '%s'", uniqueId, action);
+    _logger.debug("CALLRESULT [%s] for action '%s'", uniqueId, action);
 
     // Handle BootNotification.conf: if Accepted, start Heartbeat
     if (action == "BootNotification") {
         std::string status = payload.optValue<std::string>("status", "");
         if (status == "Accepted") {
             int interval = payload.optValue<int>("interval", 300);
-            logger.information("BootNotification Accepted, heartbeat interval: %d s", interval);
+            _logger.information("BootNotification Accepted, heartbeat interval: %d s", interval);
             startHeartbeat(interval);
-        } else {
-            // Rejected or Pending — retry after interval
-            int interval = payload.optValue<int>("interval", 30);
-            logger.warning("BootNotification %s, retrying in %d s", status, interval);
         }
     }
 
@@ -466,7 +481,6 @@ void OcppClient16J::handleCallError(const std::string& uniqueId,
                                  const std::string& errorCode,
                                  const std::string& errorDescription)
 {
-    Logger& logger = Logger::get("OcppClient");
 
     std::string action;
 
@@ -477,7 +491,7 @@ void OcppClient16J::handleCallError(const std::string& uniqueId,
     }
 
 
-    logger.warning("CALLERROR [%s] for action '%s': %s — %s",
+    _logger.warning("CALLERROR [%s] for action '%s': %s — %s",
                    uniqueId, action, errorCode, errorDescription);
 }
 
@@ -489,8 +503,7 @@ void OcppClient16J::handleIncomingCall(const std::string& uniqueId,
                                     const std::string& action,
                                     const Poco::JSON::Object& payload)
 {
-    Logger& logger = Logger::get("OcppClient");
-    logger.debug("Incoming CALL [%s] action: %s", uniqueId, action);
+    _logger.debug("Incoming CALL [%s] action: %s", uniqueId, action);
 
     // Dispatch RemoteStartTransaction and RemoteStopTransaction to callback
     if (action == "RemoteStartTransaction" || action == "RemoteStopTransaction") {
@@ -504,7 +517,7 @@ void OcppClient16J::handleIncomingCall(const std::string& uniqueId,
     	_eventQueue->push(std::move(evt));
     } else {
         // Unknown incoming CALL — log and ignore
-        logger.warning("Unhandled incoming CALL action: %s", action);
+        _logger.warning("Unhandled incoming CALL action: %s", action);
     }
 }
 
@@ -524,36 +537,41 @@ std::string OcppClient16J::generateUniqueId()
 
 void OcppClient16J::onHeartbeatTimer(Poco::Timer& /*timer*/)
 {
-    if (_connected && _running) {
-        sendHeartbeat();
-    }
+	if (!_heartbeatActive) return;
+
+	if (!_connected) return;
+
+	CentralSystemEvent evt;
+	evt.type = CentralSystemEvent::Type::Heartbeat;
+    _csysQueue->push(std::move(evt));
 }
 
 void OcppClient16J::startHeartbeat(int intervalSeconds)
 {
     if (intervalSeconds <= 0) return;
 
-    _heartbeatInterval = intervalSeconds;
+    //intervalSeconds = std::min(intervalSeconds, 30);
+
     long intervalMs = intervalSeconds * 1000L;
 
-    Logger& logger = Logger::get("OcppClient");
-    logger.debug("Starting Heartbeat timer: %d s", intervalSeconds);
+    stopHeartbeat();
 
-    if (!_heartbeatTimerStarted) {
-        _heartbeatTimer.setStartInterval(intervalMs);
-        _heartbeatTimer.setPeriodicInterval(intervalMs);
-        Poco::TimerCallback<OcppClient16J> cb(*this, &OcppClient16J::onHeartbeatTimer);
-        _heartbeatTimer.start(cb);
-        _heartbeatTimerStarted = true;
-    } else {
-        _heartbeatTimer.restart(intervalMs);
-    }
+    _heartbeatActive = true;
+
+    _heartbeatTimer.setStartInterval(intervalMs);
+    _heartbeatTimer.setPeriodicInterval(intervalMs);
+    Poco::TimerCallback<OcppClient16J> cb(*this, &OcppClient16J::onHeartbeatTimer);
+    _heartbeatTimer.start(cb);
+    _logger.debug("Heartbeat started");
+
 }
 
 void OcppClient16J::stopHeartbeat()
 {
-    if (_heartbeatTimerStarted) {
-        try { _heartbeatTimer.restart(0); } catch (...) {}
+    if (_heartbeatActive) {
+    	_heartbeatTimer.stop();
+    	_heartbeatActive = false;
+    	_logger.debug("Heartbeat stopped");
     }
 }
 

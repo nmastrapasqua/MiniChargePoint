@@ -35,6 +35,9 @@
 #include <Poco/Timer.h>
 #include <Poco/Runnable.h>
 #include <Poco/JSON/Object.h>
+#include <Poco/Logger.h>
+
+using Poco::Logger;
 
 class OcppClient16J : public ProtocolAdapter, public Poco::Runnable  {
 public:
@@ -52,11 +55,75 @@ public:
 
     void start() override;
     void stop() override;
-
     void run() override;
 
+private:
+    std::string _url;
+    std::string _chargePointId;
+    std::string _host;
+    Poco::UInt16 _port;
+    std::string _path;
+    std::unique_ptr<Poco::Net::WebSocket> _ws;
+    std::atomic<bool> _connected{false};
+    std::atomic<bool> _running{false};
+    Logger& _logger = Logger::get("OcppClient");
+    // Heartbeat timer
+    Poco::Timer _heartbeatTimer;
+    bool _heartbeatActive ;
+    // Unique ID counter
+    std::atomic<int> _uniqueIdCounter;
+    // Pending CALL tracking: uniqueId → action name
+    std::map<std::string, std::string> _pendingCalls;
+    Poco::Thread _thread;
+    ThreadSafeQueue<SessionEvent>* _eventQueue;
+    ThreadSafeQueue<CentralSystemEvent>* _csysQueue;
+
+    // --- Internal methods ---
     bool tryConnect();
-    bool isConnected() const;
+
+    void closeSocket();
+
+    void eventLoop();
+
+    void handleDisconnect();
+
+    /// Parsa l'URL WebSocket in host, port, path.
+    void parseUrl(const std::string& url);
+
+    /// Invia un messaggio CALL e registra il uniqueId come pending.
+    void sendCall(const std::string& action, const Poco::JSON::Object& payload);
+
+    /// Invia dati raw sul WebSocket (thread-safe).
+    void sendRaw(const std::string& data);
+
+    /// Gestisce un CALLRESULT ricevuto.
+    void handleCallResult(const std::string& uniqueId,
+                          const Poco::JSON::Object& payload);
+
+    /// Gestisce un CALLERROR ricevuto.
+    void handleCallError(const std::string& uniqueId,
+                         const std::string& errorCode,
+                         const std::string& errorDescription);
+
+    /// Gestisce un CALL in ingresso dal Central_System.
+    void handleIncomingCall(const std::string& uniqueId,
+                            const std::string& action,
+                            const Poco::JSON::Object& payload);
+
+    /// Genera un uniqueId univoco per i messaggi CALL.
+    std::string generateUniqueId();
+
+    /// Callback del timer Heartbeat.
+    void onHeartbeatTimer(Poco::Timer& timer);
+
+    /// Avvia il timer Heartbeat con l'intervallo specificato.
+    void startHeartbeat(int intervalSeconds);
+
+    /// Ferma il timer Heartbeat.
+    void stopHeartbeat();
+
+    /// Notifica il cambio stato connessione ai listener.
+    void notifyConnectionStatus(bool connected);
 
     void sendBootNotification(
         const std::string& chargePointModel,
@@ -89,85 +156,6 @@ public:
     void sendCallResult(
         const std::string& uniqueId,
         const Poco::JSON::Object& payload);
-
-private:
-    std::string _url;
-    std::string _chargePointId;
-    std::string _host;
-    Poco::UInt16 _port;
-    std::string _path;
-
-    std::unique_ptr<Poco::Net::HTTPClientSession> _session;
-    std::unique_ptr<Poco::Net::WebSocket> _ws;
-
-    std::atomic<bool> _connected{false};
-    std::atomic<bool> _running{false};
-
-    // Heartbeat timer
-    Poco::Timer _heartbeatTimer;
-    int _heartbeatInterval;  // seconds, from BootNotification.conf
-    bool _heartbeatTimerStarted;
-
-    // Reconnect timer
-    Poco::Timer _reconnectTimer;
-    bool _reconnectNeeded;
-    bool _reconnectTimerStarted;
-
-    // Unique ID counter
-    std::atomic<int> _uniqueIdCounter;
-
-    // Pending CALL tracking: uniqueId → action name
-    std::map<std::string, std::string> _pendingCalls;
-
-    Poco::Thread _thread;
-    ThreadSafeQueue<SessionEvent>* _eventQueue;
-    ThreadSafeQueue<CentralSystemEvent>* _csysQueue;
-
-    // --- Internal methods ---
-
-    /// Parsa l'URL WebSocket in host, port, path.
-    void parseUrl(const std::string& url);
-
-    /// Invia un messaggio CALL e registra il uniqueId come pending.
-    void sendCall(const std::string& action, const Poco::JSON::Object& payload);
-
-    /// Invia dati raw sul WebSocket (thread-safe).
-    void sendRaw(const std::string& data);
-
-    /// Gestisce un CALLRESULT ricevuto.
-    void handleCallResult(const std::string& uniqueId,
-                          const Poco::JSON::Object& payload);
-
-    /// Gestisce un CALLERROR ricevuto.
-    void handleCallError(const std::string& uniqueId,
-                         const std::string& errorCode,
-                         const std::string& errorDescription);
-
-    /// Gestisce un CALL in ingresso dal Central_System.
-    void handleIncomingCall(const std::string& uniqueId,
-                            const std::string& action,
-                            const Poco::JSON::Object& payload);
-
-    /// Genera un uniqueId univoco per i messaggi CALL.
-    std::string generateUniqueId();
-
-    /// Callback del timer Heartbeat.
-    void onHeartbeatTimer(Poco::Timer& timer);
-
-    /// Callback del timer di riconnessione.
-    void onReconnectTimer(Poco::Timer& timer);
-
-    /// Avvia il timer Heartbeat con l'intervallo specificato.
-    void startHeartbeat(int intervalSeconds);
-
-    /// Ferma il timer Heartbeat.
-    void stopHeartbeat();
-
-    /// Avvia il timer di riconnessione (ogni 10 secondi).
-    void startReconnect();
-
-    /// Notifica il cambio stato connessione ai listener.
-    void notifyConnectionStatus(bool connected);
 };
 
 #endif // OCPPCLIENT16J_H

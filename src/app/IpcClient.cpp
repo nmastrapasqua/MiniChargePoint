@@ -43,9 +43,10 @@ void IpcClient::stop() {
 
     _running = false;
 
+    try { _thread.join(); } catch (...) {}
+
     closeSocket();
 
-    try { _thread.join(); } catch (...) {}
 }
 
 // ------------------------------------------------------------

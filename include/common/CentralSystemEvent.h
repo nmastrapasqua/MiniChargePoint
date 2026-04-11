@@ -11,7 +11,8 @@ struct CentralSystemEvent {
     	StopTransaction,
     	MeterValues,
     	CallResult,
-    	Authorize
+    	Authorize,
+		Heartbeat
     };
 
     Type type;
