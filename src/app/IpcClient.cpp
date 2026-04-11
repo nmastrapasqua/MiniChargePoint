@@ -187,6 +187,7 @@ void IpcClient::processLine(const std::string& line) {
     if (type == IpcMessage::TYPE_CONNECTOR_STATE) {
         evt.type = SessionEvent::Type::ConnectorStateChanged;
         evt.stringParam = obj->getValue<std::string>("state");
+        evt.stringParam2 = obj->getValue<std::string>("errorType");
 
     } else if (type == IpcMessage::TYPE_METER_VALUE) {
         evt.type = SessionEvent::Type::MeterValue;

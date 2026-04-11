@@ -51,6 +51,11 @@ public:
      */
     std::string getErrorCodeOcpp() const;
 
+    /**
+     * Restituisce il tipo di errore in formato stringa
+     */
+    std::string getErrorType() const;
+
 private:
     ConnectorSimulator& _connector;
     ErrorType _currentError;

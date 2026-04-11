@@ -85,7 +85,7 @@ private:
     Logger& _logger = Logger::get("SessionManager");
 
     // --- Messaggi ricevuti da ipc ---
-    void handleConnectorStateChanged(const std::string& newState);
+    void handleConnectorStateChanged(const std::string& newState, const std::string& errorType);
     void handleMeterValue(int meterValueWh);
     void handleError(const std::string& errorType);
     void handleErrorCleared();

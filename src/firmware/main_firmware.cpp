@@ -124,6 +124,7 @@ int main(int argc, char* argv[])
             Poco::JSON::Object msg;
             msg.set("type",      IpcMessage::TYPE_CONNECTOR_STATE);
             msg.set("state",     stateStr);
+            msg.set("errorType", errorSim.getErrorType());
             msg.set("timestamp", nowTimestamp());
             ipcServer.sendMessage(msg);
         });

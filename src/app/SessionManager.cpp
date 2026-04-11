@@ -99,7 +99,7 @@ void SessionManager::run()
 
         switch (evt->type) {
             case SessionEvent::Type::ConnectorStateChanged:
-            	handleConnectorStateChanged(evt->stringParam);
+            	handleConnectorStateChanged(evt->stringParam, evt->stringParam2);
                 break;
             case SessionEvent::Type::MeterValue:
             	handleMeterValue(evt->intParam);
@@ -151,7 +151,7 @@ void SessionManager::run()
 // Handler privati
 // ---------------------------------------------------------------------------
 
-void SessionManager::handleConnectorStateChanged(const std::string& newState)
+void SessionManager::handleConnectorStateChanged(const std::string& newState, const std::string& errorType)
 {
     _logger.information("Connector state changed to: %s", newState);
 
@@ -175,6 +175,7 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState)
     	_status.isCharging = false;
     }
 
+    if (!errorType.empty()) _status.lastError = errorType;
     std::string errorCode = mapErrorCode(newState);
     CentralSystemEvent statusEvt;
     statusEvt.type = CentralSystemEvent::Type::StatusNotification;
@@ -191,6 +192,7 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState)
         stopEvt.meterValue = meterStop;
         stopEvt.reason = "EmergencyStop";
         _csysQueue->push(std::move(stopEvt));
+        _status.transactionId = -1;
     }
 
     if (wasCharging && newState == "Finishing" && txId >= 0) {
@@ -201,6 +203,7 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState)
         stopLocalEvt.meterValue = meterStop;
         stopLocalEvt.reason = "Local";
         _csysQueue->push(std::move(stopLocalEvt));
+        _status.transactionId = -1;
     }
 
     notifyStatusUpdate();
@@ -257,6 +260,12 @@ void SessionManager::handleCentralSystemConnectionChanged(bool connected)
                        std::string(connected ? "connected" : "disconnected"));
 
     _status.centralSystemConnected = connected;
+
+    if (!connected) {
+    	_awaitingAuthorize = false;
+    	_pendingIdTag.clear();
+    }
+
     notifyStatusUpdate();
 }
 
@@ -281,11 +290,13 @@ void SessionManager::handleRemoteCommand(const std::string& action,
     _logger.information("Remote command received: %s", action);
 
     if (action == "RemoteStartTransaction") {
-        std::string connState = _status.connectorState;
 
         Poco::JSON::Object response;
 
-        if (connState == "Available") {
+        if (_status.connectorState == "Available" &&
+                _status.firmwareConnected &&
+                _status.centralSystemConnected)
+        {
             response.set("status", "Accepted");
             CentralSystemEvent acceptedEvt;
             acceptedEvt.type = CentralSystemEvent::Type::CallResult;
@@ -293,24 +304,19 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             acceptedEvt.payload = response;
             _csysQueue->push(std::move(acceptedEvt));
 
-            std::string idTag = "UNKNOWN";
-            if (payload.has("idTag")) {
-                idTag = payload.getValue<std::string>("idTag");
-            }
+            std::string idTag = payload.optValue<std::string>("idTag", "UNKNOWN");
 
             sendIpcCommand("plug_in");
 
-            int meterStart = _status.currentMeterValue;
-
             _awaitingAuthorize = true;
             _pendingIdTag = idTag;
-            _pendingMeterStart = meterStart;
+            _pendingMeterStart = _status.currentMeterValue;
             CentralSystemEvent authEvt;
             authEvt.type = CentralSystemEvent::Type::Authorize;
             authEvt.idTag = idTag;
             _csysQueue->push(std::move(authEvt));
         } else {
-            _logger.warning("RemoteStartTransaction rejected: connector is %s", connState);
+            _logger.warning("RemoteStartTransaction rejected: connector is %s", _status.connectorState);
             response.set("status", "Rejected");
             CentralSystemEvent rejEvt;
             rejEvt.type = CentralSystemEvent::Type::CallResult;
@@ -364,10 +370,7 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
 
     std::string action = response.optValue<std::string>("action", "");
     if (action == "BootNotification") {
-        std::string bootStatus = "";
-        if (response.has("status")) {
-            bootStatus = response.getValue<std::string>("status");
-        }
+        std::string bootStatus = response.optValue<std::string>("status", "");
         bool accepted = (bootStatus == "Accepted");
         _status.centralSystemConnected = accepted;
         if (accepted) {
@@ -400,12 +403,12 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
         }
 
         _awaitingAuthorize = false;
-        _pendingIdTag = "";
+        _pendingIdTag.clear();
         notifyStatusUpdate();
         return;
     }
 
-    if (response.has("transactionId")) {
+    if (action == "StartTransaction" && response.has("transactionId")) {
         int txId = response.getValue<int>("transactionId");
         _logger.information("StartTransaction confirmed, transactionId=%d", txId);
 

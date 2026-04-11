@@ -40,3 +40,13 @@ std::string ErrorSimulator::getErrorCodeOcpp() const
         default:                         return "NoError";
     }
 }
+
+std::string ErrorSimulator::getErrorType() const
+{
+    Poco::Mutex::ScopedLock lock(_mutex);
+    switch (_currentError) {
+        case ErrorType::HardwareFault:   return "HardwareFault";
+        case ErrorType::TamperDetection: return "TamperDetection";
+        default:                         return "";
+    }
+}
