@@ -14,7 +14,6 @@
  * dedicato, garantendo serializzazione e disaccoppiamento dai chiamanti.
  * OcppClient16J e IpcClient pushano direttamente nella _eventQueue.
  *
- * Requisiti validati: 3.4, 3.5, 3.6, 3.7, 3.10, 3.11, 3.12, 3.13, 3.14, 5.1, 7.3, 7.4
  */
 #ifndef SESSIONMANAGER_H
 #define SESSIONMANAGER_H
@@ -28,6 +27,8 @@
 #include <Poco/Logger.h>
 #include <Poco/Thread.h>
 #include <Poco/Runnable.h>
+
+using Poco::Logger;
 
 class SessionManager: public Poco::Runnable {
 public:
@@ -80,6 +81,8 @@ private:
     ThreadSafeQueue<CentralSystemEvent>* _csysQueue = nullptr;
 
     Poco::Thread _eventThread;
+
+    Logger& _logger = Logger::get("SessionManager");
 
     // --- Messaggi ricevuti da ipc ---
     void handleConnectorStateChanged(const std::string& newState);
