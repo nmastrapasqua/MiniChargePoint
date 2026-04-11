@@ -192,7 +192,6 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
         stopEvt.meterValue = meterStop;
         stopEvt.reason = "EmergencyStop";
         _csysQueue->push(std::move(stopEvt));
-        _status.transactionId = -1;
     }
 
     if (wasCharging && newState == "Finishing" && txId >= 0) {
@@ -203,7 +202,6 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
         stopLocalEvt.meterValue = meterStop;
         stopLocalEvt.reason = "Local";
         _csysQueue->push(std::move(stopLocalEvt));
-        _status.transactionId = -1;
     }
 
     notifyStatusUpdate();
@@ -260,11 +258,6 @@ void SessionManager::handleCentralSystemConnectionChanged(bool connected)
                        std::string(connected ? "connected" : "disconnected"));
 
     _status.centralSystemConnected = connected;
-
-    if (!connected) {
-    	_awaitingAuthorize = false;
-    	_pendingIdTag.clear();
-    }
 
     notifyStatusUpdate();
 }
@@ -389,21 +382,22 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
         if (authStatus == "Accepted") {
             _logger.information("Authorize accepted for idTag: %s", _pendingIdTag);
 
-            sendIpcCommand("start_charge");
-            CentralSystemEvent startEvt;
-            startEvt.type = CentralSystemEvent::Type::StartTransaction;
-            startEvt.connectorId = 1;
-            startEvt.idTag = _pendingIdTag;
-            startEvt.meterValue = _pendingMeterStart;
-            _csysQueue->push(std::move(startEvt));
-            _status.idTag = _pendingIdTag;
+			sendIpcCommand("start_charge");
+			CentralSystemEvent startEvt;
+			startEvt.type = CentralSystemEvent::Type::StartTransaction;
+			startEvt.connectorId = 1;
+			startEvt.idTag = _pendingIdTag;
+			startEvt.meterValue = _pendingMeterStart;
+			_csysQueue->push(std::move(startEvt));
+			_status.idTag = _pendingIdTag;
 
         } else {
             _logger.warning("Authorize rejected for idTag: %s (status: %s)", _pendingIdTag, authStatus);
         }
 
         _awaitingAuthorize = false;
-        _pendingIdTag.clear();
+        _pendingIdTag = "";
+        _pendingMeterStart = 0;
         notifyStatusUpdate();
         return;
     }
