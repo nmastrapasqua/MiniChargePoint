@@ -155,3 +155,7 @@ impl/
 ├── web/                   # Interfaccia web (HTML/CSS/JS puro)
 └── test/                  # Unit test
 ```
+
+## Links
+* [SteVe](https://github.com/steve-community/steve)
+* [Poco C++](https://pocoproject.org/)
