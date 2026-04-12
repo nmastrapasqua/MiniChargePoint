@@ -285,9 +285,7 @@ void SessionManager::handleRemoteCommand(const std::string& action,
 
         Poco::JSON::Object response;
 
-        if (_status.connectorState == "Available" &&
-                _status.firmwareConnected &&
-                _status.centralSystemConnected)
+        if (_status.connectorState == "Available")
         {
         	// Accettare: rispondere Accepted, poi avviare sequenza
             response.set("status", "Accepted");
