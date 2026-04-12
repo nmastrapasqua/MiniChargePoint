@@ -15,6 +15,7 @@ IpcClient::IpcClient(const std::string& socketPath,
     : _socketPath(socketPath)
 	, _inQueue(iq)
 	, _outQueue(oq)
+	, _logger(Poco::Logger::get("IpcClient"))
 {
 	 if (!_inQueue) {
 		 throw std::invalid_argument("inQueue non può essere nullptr");

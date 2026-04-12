@@ -81,7 +81,7 @@ private:
 
     Poco::Thread _eventThread;
 
-    Poco::Logger& _logger = Poco::Logger::get("SessionManager");
+    Poco::Logger& _logger;
 
     // --- Messaggi ricevuti da ipc ---
     void handleConnectorStateChanged(const std::string& newState, const std::string& errorType);

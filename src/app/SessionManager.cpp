@@ -34,6 +34,7 @@ SessionManager::SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
 	, _uiQueue(uiQ)
 	, _ipcQueue(ipcQ)
 	, _csysQueue(csysQueue)
+	, _logger(Poco::Logger::get("SessionManager"))
 {
     _status.connectorState = "Available";
     _status.currentMeterValue = 0;

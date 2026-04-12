@@ -43,7 +43,7 @@ private:
 
     std::string _buffer;
 
-    Poco::Logger& _logger = Poco::Logger::get("IpcClient");
+    Poco::Logger& _logger;
 
     // --- internal ---
     bool tryConnect();

@@ -35,7 +35,7 @@ private:
     ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
     ThreadSafeQueue<std::string>* _uiQueue = nullptr;
 
-    Poco::Logger& _logger = Poco::Logger::get("WebSocketHandler");
+    Poco::Logger& _logger;
 
     void processCommand(const std::string& json);
 

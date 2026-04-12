@@ -2,8 +2,8 @@
  * main_app.cpp — Entry point del processo charge_point_app (Application_Layer).
  *
  * Istanzia ConfigManager, IpcClient, OcppClient16J (come ProtocolAdapter),
- * SessionManager e WebServer. Collega le callback tra i componenti e avvia
- * la comunicazione IPC, OCPP e il server web.
+ * SessionManager e WebServer. Collega tutti i componenti
+ * tramite code sincronizzate.
  *
  * Requisiti validati: 1.3, 5.4, 9.1, 9.2, 9.5
  */

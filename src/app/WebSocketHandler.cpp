@@ -1,12 +1,6 @@
 /**
  * WebSocketHandler — Implementazione.
  *
- * Approccio: ogni client ha un sendMutex che protegge le operazioni di invio.
- * Il receiveFrame non ha bisogno di lock perché è chiamato solo dal thread
- * del handler. Il sendFrame è protetto dal sendMutex e può essere chiamato
- * dal thread del broadcaster.
- *
- * Requisiti validati: 6.2, 6.4, 6.5
  */
 #include "app/WebSocketHandler.h"
 
@@ -30,6 +24,7 @@ using Poco::Net::WebSocket;
 WebSocketHandler::WebSocketHandler(ThreadSafeQueue<SessionEvent>* q, ThreadSafeQueue<std::string>* uq)
 	: _eventQueue(q)
 	, _uiQueue(uq)
+	, _logger(Poco::Logger::get("WebSocketHandler"))
 {
 	 if (!_eventQueue) {
 		 throw std::invalid_argument("eventQueue non può essere nullptr");

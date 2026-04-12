@@ -65,7 +65,7 @@ private:
     std::unique_ptr<Poco::Net::WebSocket> _ws;
     std::atomic<bool> _connected{false};
     std::atomic<bool> _running{false};
-    Poco::Logger& _logger = Poco::Logger::get("OcppClient");
+    Poco::Logger& _logger;
     // Heartbeat timer
     Poco::Timer _heartbeatTimer;
     bool _heartbeatActive ;

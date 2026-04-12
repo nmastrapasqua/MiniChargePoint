@@ -37,6 +37,7 @@ OcppClient16J::OcppClient16J(const std::string& centralSystemUrl,
     , _path()
     , _connected(false)
     , _running(false)
+	, _logger(Poco::Logger::get("OcppClient"))
     , _heartbeatTimer(0, 0)
     , _heartbeatActive(false)
     , _uniqueIdCounter(1)
