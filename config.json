@@ -7,6 +7,6 @@
     "defaultIdTag": "TESTIDTAG1",
     "logLevel": "information",
     "logFile": "minichargepoint.log",
-	"logFormat": "%Y-%m-%d %H:%M:%S [%q] [%T] %s: %t",
+	"logFormat": "%Y-%m-%d %H:%M:%S.%i [%q] [%I] %s: %t",
     "protocol": "ocpp1.6j"
 }

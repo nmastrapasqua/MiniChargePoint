@@ -1,5 +1,9 @@
 /**
- * WebSocketHandler — Gestisce connessioni WebSocket dai browser.
+ * WebSocketHandler — Gestisce la connessione WebSocket da un solo browser.
+ * Questa implementazione è volutamente semplice e non gestisce
+ * la connessione da più browser; gestire connessioni multiple
+ * comporta un aumento della complessità che di fatto
+ * sarebbe inutile in questo contesto.
  *
  * Requisiti validati: 6.2, 6.4, 6.5
  */
@@ -19,8 +23,6 @@
 #include <Poco/JSON/Object.h>
 #include <Poco/Logger.h>
 
-using Poco::Logger;
-
 
 class WebSocketHandler : public Poco::Net::HTTPRequestHandler {
 public:
@@ -33,7 +35,7 @@ private:
     ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
     ThreadSafeQueue<std::string>* _uiQueue = nullptr;
 
-    Logger& _logger = Logger::get("WebSocketHandler");
+    Poco::Logger& _logger = Poco::Logger::get("WebSocketHandler");
 
     void processCommand(const std::string& json);
 

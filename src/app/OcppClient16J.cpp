@@ -417,7 +417,10 @@ void OcppClient16J::sendCall(const std::string& action,
 
 void OcppClient16J::sendRaw(const std::string& data)
 {
-
+	// Eventuali eccezioni lanciate da questo metodo
+	// provocano la finel del ciclo nel metodo eventLoop
+	// e la successiva invocazione del metodo handleDisconnect
+	// che imposta _connected = false
     if (!_ws || !_connected) {
         _logger.warning("Cannot send message: not connected");
         return;
