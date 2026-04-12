@@ -46,6 +46,13 @@ header {
 }
 header h1 { font-size: 1.25rem; font-weight: 700; }
 
+/* Charge point image */
+.charge-point-img {
+  display: block;
+  height: 120px; width: auto;
+  margin-bottom: 1rem;
+}
+
 /* Badges */
 .badge {
   display: inline-block; padding: .25rem .75rem;
