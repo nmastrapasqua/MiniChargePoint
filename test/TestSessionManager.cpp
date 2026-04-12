@@ -425,10 +425,21 @@ static void testP13_RemoteStopMatchingTxId()
     std::string st = results[0].payload.optValue<std::string>("status", "");
     ASSERT_EQ(std::string("Accepted"), st);
 
+    // stop_charge inviato subito
     auto ipcMsgs = drainIpc(tq.ipcQ);
-    ASSERT_TRUE(ipcMsgs.size() >= 2);
+    ASSERT_TRUE(ipcMsgs.size() >= 1);
     ASSERT_EQ(std::string("stop_charge"), getIpcAction(ipcMsgs[0]));
-    ASSERT_EQ(std::string("plug_out"), getIpcAction(ipcMsgs[1]));
+
+    // plug_out viene inviato dopo Finishing (con delay di 1s nel SessionManager)
+    SessionEvent finEvt;
+    finEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    finEvt.stringParam = "Finishing";
+    tq.eventQ.push(std::move(finEvt));
+    Poco::Thread::sleep(1500);  // attende delay + processing
+
+    ipcMsgs = drainIpc(tq.ipcQ);
+    ASSERT_TRUE(ipcMsgs.size() >= 1);
+    ASSERT_EQ(std::string("plug_out"), getIpcAction(ipcMsgs[0]));
 
     tq.eventQ.close();
     sm.stop();

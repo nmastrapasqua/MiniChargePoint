@@ -30,6 +30,8 @@ SessionManager::SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
     : _awaitingAuthorize(false)
 	, _pendingIdTag("")
     , _pendingMeterStart(0)
+    , _pendingRemoteStart(false)
+    , _pendingRemoteStop(false)
 	, _eventQueue(eventQ)
 	, _uiQueue(uiQ)
 	, _ipcQueue(ipcQ)
@@ -186,6 +188,18 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     statusEvt.errorCode = errorCode;
     _csysQueue->push(std::move(statusEvt));
 
+    // Se c'è un RemoteStart pendente e siamo in Preparing → invia Authorize
+    // con delay per dare tempo a SteVe di processare la StatusNotification Preparing
+    if (_pendingRemoteStart && newState == "Preparing") {
+        _pendingRemoteStart = false;
+        _awaitingAuthorize = true;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        CentralSystemEvent authEvt;
+        authEvt.type = CentralSystemEvent::Type::Authorize;
+        authEvt.idTag = _pendingIdTag;
+        _csysQueue->push(std::move(authEvt));
+    }
+
     // Se era in ricarica e il connettore è andato in Faulted → StopTransaction con EmergencyStop
     if (wasCharging && newState == "Faulted" && txId >= 0) {
         _logger.debug("Fault during active session (txId=%d) — sending StopTransaction with EmergencyStop", txId);
@@ -206,6 +220,14 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
         stopLocalEvt.meterValue = meterStop;
         stopLocalEvt.reason = "Local";
         _csysQueue->push(std::move(stopLocalEvt));
+    }
+
+    // Se c'è un RemoteStop pendente e siamo in Finishing → plug_out con delay
+    // per dare tempo a SteVe di processare StatusNotification e StopTransaction
+    if (_pendingRemoteStop && newState == "Finishing") {
+        _pendingRemoteStop = false;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        sendIpcCommand("plug_out");
     }
 
     notifyStatusUpdate();
@@ -302,16 +324,11 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             // Sequenza: plug_in → authorize → start_charge
             sendIpcCommand("plug_in");
 
-            // Avviare la sequenza Authorize direttamente (il connettore passerà
-            // a Preparing in modo asincrono, ma per il flusso remoto non serve
-            // attendere — il check stato è già stato fatto sopra)
-            _awaitingAuthorize = true;
+            // L'Authorize verrà inviato quando arriva ConnectorStateChanged Preparing
+            // per garantire che la StatusNotification Preparing arrivi a SteVe prima
+            _pendingRemoteStart = true;
             _pendingIdTag = idTag;
             _pendingMeterStart = _status.currentMeterValue;
-            CentralSystemEvent authEvt;
-            authEvt.type = CentralSystemEvent::Type::Authorize;
-            authEvt.idTag = idTag;
-            _csysQueue->push(std::move(authEvt));
         } else {
         	// Connettore non disponibile → Rejected
             _logger.debug("RemoteStartTransaction rejected: connector is %s", _status.connectorState);
@@ -339,9 +356,9 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             acceptedEvt.payload = response;
             _csysQueue->push(std::move(acceptedEvt));
 
-            // Arrestare la ricarica: stop_charge → plug_out
+            // Arrestare la ricarica: stop_charge ora, plug_out dopo Finishing
             sendIpcCommand("stop_charge");
-            sendIpcCommand("plug_out");
+            _pendingRemoteStop = true;
         } else {
         	// TransactionId non corrisponde → Rejected
             _logger.debug("RemoteStopTransaction rejected: requested txId=%d, current txId=%d",
