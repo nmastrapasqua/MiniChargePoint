@@ -26,12 +26,14 @@
 SessionManager::SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
 		ThreadSafeQueue<std::string>* uiQ,
 		ThreadSafeQueue<std::string>* ipcQ,
-		ThreadSafeQueue<CentralSystemEvent>* csysQueue)
+		ThreadSafeQueue<CentralSystemEvent>* csysQueue,
+		int remoteDelayMs)
     : _awaitingAuthorize(false)
 	, _pendingIdTag("")
     , _pendingMeterStart(0)
     , _pendingRemoteStart(false)
     , _pendingRemoteStop(false)
+    , _remoteDelayMs(remoteDelayMs)
 	, _eventQueue(eventQ)
 	, _uiQueue(uiQ)
 	, _ipcQueue(ipcQ)
@@ -193,7 +195,8 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     if (_pendingRemoteStart && newState == "Preparing") {
         _pendingRemoteStart = false;
         _awaitingAuthorize = true;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (_remoteDelayMs > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
         CentralSystemEvent authEvt;
         authEvt.type = CentralSystemEvent::Type::Authorize;
         authEvt.idTag = _pendingIdTag;
@@ -226,7 +229,8 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     // per dare tempo a SteVe di processare StatusNotification e StopTransaction
     if (_pendingRemoteStop && newState == "Finishing") {
         _pendingRemoteStop = false;
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (_remoteDelayMs > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
         sendIpcCommand("plug_out");
     }
 

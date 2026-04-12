@@ -46,7 +46,8 @@ public:
     SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
 			ThreadSafeQueue<std::string>* uiQ,
 			ThreadSafeQueue<std::string>* ipcQ,
-			ThreadSafeQueue<CentralSystemEvent>* csysQueue);
+			ThreadSafeQueue<CentralSystemEvent>* csysQueue,
+			int remoteDelayMs = 1000);
 
     ~SessionManager();
 
@@ -68,6 +69,7 @@ private:
     int _pendingMeterStart;
     bool _pendingRemoteStart;   // true se in attesa di Preparing per RemoteStart
     bool _pendingRemoteStop;    // true se in attesa di Finishing per RemoteStop
+    int _remoteDelayMs;         // delay per sincronizzazione con SteVe
 
     // --- Coda eventi e thread dedicato ---
     ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
