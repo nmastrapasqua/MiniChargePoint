@@ -189,7 +189,7 @@ void OcppClient16J::handleDisconnect() {
     notifyConnectionStatus(false);
 
     if (_running) {
-        _logger.information("Reconnecting in 5 seconds...");
+        _logger.debug("Reconnecting in 5 seconds...");
         std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 }
@@ -240,10 +240,10 @@ bool OcppClient16J::tryConnect()
         _ws->setReceiveTimeout(Poco::Timespan(0, 100000)); // 100 ms
 
         _connected = true;
-        _logger.information("WebSocket connection established with Central_System");
+        _logger.debug("WebSocket connection established with Central_System");
         return true;
     } catch (Poco::Exception& e) {
-        _logger.warning("Failed to connect to Central_System: %s", e.displayText());
+        _logger.debug("Failed to connect to Central_System: %s", e.displayText());
         _connected = false;
         return false;
     }
@@ -451,7 +451,7 @@ void OcppClient16J::handleCallResult(const std::string& uniqueId,
         std::string status = payload.optValue<std::string>("status", "");
         if (status == "Accepted") {
             int interval = payload.optValue<int>("interval", 300);
-            _logger.information("BootNotification Accepted, heartbeat interval: %d s", interval);
+            _logger.debug("BootNotification Accepted, heartbeat interval: %d s", interval);
             startHeartbeat(interval);
         }
     }

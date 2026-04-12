@@ -58,7 +58,7 @@ static int parseLogLevel(const std::string& level)
 static void setupLogging(const ConfigManager::Config& cfg)
 {
     Poco::AutoPtr<Poco::PatternFormatter> formatter(new Poco::PatternFormatter);
-    formatter->setProperty("pattern", "%Y-%m-%d %H:%M:%S.%i [%p] %s: %t");
+    formatter->setProperty("pattern", cfg.logFormat);
 
     Poco::AutoPtr<Poco::ConsoleChannel> consoleChannel(new Poco::ConsoleChannel);
     Poco::AutoPtr<Poco::FileChannel> fileChannel(new Poco::FileChannel);

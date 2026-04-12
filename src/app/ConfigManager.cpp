@@ -73,6 +73,7 @@ ConfigManager::Config ConfigManager::load(const std::string& filePath)
     if (obj->has("defaultIdTag"))      cfg.defaultIdTag      = obj->getValue<std::string>("defaultIdTag");
     if (obj->has("logLevel"))          cfg.logLevel          = obj->getValue<std::string>("logLevel");
     if (obj->has("logFile"))           cfg.logFile           = obj->getValue<std::string>("logFile");
+    if (obj->has("logFormat"))         cfg.logFormat         = obj->getValue<std::string>("logFormat");
     if (obj->has("protocol"))          cfg.protocol          = obj->getValue<std::string>("protocol");
 
     // Validazione — Req 8.4 (valori non validi → errore + terminazione)
@@ -123,6 +124,7 @@ std::string ConfigManager::toJson(const Config& config)
     obj.set("defaultIdTag",     config.defaultIdTag);
     obj.set("logLevel",         config.logLevel);
     obj.set("logFile",          config.logFile);
+    obj.set("logFormat",        config.logFormat);
     obj.set("protocol",         config.protocol);
 
     std::ostringstream oss;

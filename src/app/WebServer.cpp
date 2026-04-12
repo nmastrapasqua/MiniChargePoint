@@ -144,7 +144,7 @@ void WebServer::start()
         );
 
         _httpServer->start();
-        logger.information("WebServer started on port %d, serving files from %s",
+        logger.debug("WebServer started on port %d, serving files from %s",
                            _port, _webRoot);
 
     } catch (Poco::Exception& ex) {
@@ -158,6 +158,6 @@ void WebServer::stop()
     if (_httpServer) {
         _httpServer->stop();
         Logger& logger = Logger::get("WebServer");
-        logger.information("WebServer stopped");
+        logger.debug("WebServer stopped");
     }
 }

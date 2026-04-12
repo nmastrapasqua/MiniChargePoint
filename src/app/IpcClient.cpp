@@ -64,7 +64,7 @@ void IpcClient::run() {
         // --- CONNECT ---
         if (!_connected) {
             if (tryConnect()) {
-                _logger.information("IPC connected");
+                _logger.debug("IPC connected");
                 notifyConnectionStatus(true);
             } else {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -145,7 +145,7 @@ void IpcClient::handleRead() {
 void IpcClient::handleWrite() {
 
     while (auto msg = _inQueue->try_pop()) {
-    	_logger.information("Command from SessionManager: %s", msg.value());
+    	_logger.debug("Command from SessionManager: %s", msg.value());
     	std::string& message = msg.value();
     	message += '\n';
         _socket.sendBytes(message.data(), (int)message.size());
@@ -167,7 +167,7 @@ void IpcClient::notifyConnectionStatus(bool connected) {
 
 void IpcClient::processLine(const std::string& line) {
 
-    _logger.information("Message from firmware: %s",line);
+    _logger.debug("Message from firmware: %s",line);
 
     Poco::JSON::Object::Ptr obj;
 

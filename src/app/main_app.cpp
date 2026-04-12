@@ -14,6 +14,7 @@
 #include "app/WebServer.h"
 #include "app/WebSocketHandler.h"
 #include "common/IpcMessage.h"
+#include "common/AsciiArt.h"
 
 #include <Poco/Logger.h>
 #include <Poco/AutoPtr.h>
@@ -52,7 +53,7 @@ static int parseLogLevel(const std::string& level)
 static void setupLogging(const ConfigManager::Config& cfg)
 {
     Poco::AutoPtr<Poco::PatternFormatter> formatter(new Poco::PatternFormatter);
-    formatter->setProperty("pattern", "%Y-%m-%d %H:%M:%S [%q] [%T] %s: %t");
+    formatter->setProperty("pattern", cfg.logFormat);
 
     Poco::AutoPtr<Poco::ConsoleChannel> consoleChannel(new Poco::ConsoleChannel);
     Poco::AutoPtr<Poco::FileChannel> fileChannel(new Poco::FileChannel);
@@ -91,6 +92,8 @@ static std::unique_ptr<ProtocolAdapter> createProtocolAdapter(
 
 int main(int argc, char* argv[])
 {
+	printBanner();
+
     // --- Configurazione ---
     std::string configPath = "config.json";
     if (argc > 1) {
@@ -101,7 +104,7 @@ int main(int argc, char* argv[])
     setupLogging(cfg);
 
     Poco::Logger& logger = Poco::Logger::get("AppMain");
-    logger.information("charge_point_app starting");
+    logger.debug("charge_point_app starting");
 
     // --- Code ---
     ThreadSafeQueue<SessionEvent> eventQueue;

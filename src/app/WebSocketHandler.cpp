@@ -47,7 +47,7 @@ void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
         WebSocket ws(request, response);
         ws.setReceiveTimeout(Poco::Timespan(0, 100000)); // 100 ms
 
-        _logger.information("Browser WebSocket connected");
+        _logger.debug("Browser WebSocket connected");
 
         // Richiede l'aggiornamento dello stato
         SessionEvent evt;
@@ -85,7 +85,7 @@ void WebSocketHandler::handleRequest(Poco::Net::HTTPServerRequest& request,
             }
         }
 
-        _logger.information("Browser WebSocket disconnected");
+        _logger.debug("Browser WebSocket disconnected");
 
     } catch (Poco::Net::WebSocketException& ex) {
         _logger.error("WebSocket error: %s", ex.displayText());
