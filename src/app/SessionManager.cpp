@@ -153,7 +153,7 @@ void SessionManager::run()
 
 void SessionManager::handleConnectorStateChanged(const std::string& newState, const std::string& errorType)
 {
-    _logger.information("Connector state changed to: %s", newState);
+    _logger.debug("Connector state changed to: %s", newState);
 
     bool wasCharging = _status.isCharging;
     int txId = _status.transactionId;
@@ -175,6 +175,7 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     	_status.isCharging = false;
     }
 
+    // Invia StatusNotification al Central_System
     if (!errorType.empty()) _status.lastError = errorType;
     std::string errorCode = mapErrorCode(newState);
     CentralSystemEvent statusEvt;
@@ -184,8 +185,9 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     statusEvt.errorCode = errorCode;
     _csysQueue->push(std::move(statusEvt));
 
+    // Se era in ricarica e il connettore è andato in Faulted → StopTransaction con EmergencyStop
     if (wasCharging && newState == "Faulted" && txId >= 0) {
-        _logger.warning("Fault during active session (txId=%d) — sending StopTransaction with EmergencyStop", txId);
+        _logger.debug("Fault during active session (txId=%d) — sending StopTransaction with EmergencyStop", txId);
         CentralSystemEvent stopEvt;
         stopEvt.type = CentralSystemEvent::Type::StopTransaction;
         stopEvt.transactionId = txId;
@@ -194,8 +196,9 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
         _csysQueue->push(std::move(stopEvt));
     }
 
+    // Se era in ricarica e il connettore è in Finishing → StopTransaction normale
     if (wasCharging && newState == "Finishing" && txId >= 0) {
-        _logger.information("Charging session ending (txId=%d), sending StopTransaction", txId);
+        _logger.debug("Charging session ending (txId=%d), sending StopTransaction", txId);
         CentralSystemEvent stopLocalEvt;
         stopLocalEvt.type = CentralSystemEvent::Type::StopTransaction;
         stopLocalEvt.transactionId = txId;
@@ -214,6 +217,7 @@ void SessionManager::handleMeterValue(int meterValueWh)
 
     _status.currentMeterValue = meterValueWh;
 
+    // Inoltra MeterValues al Central_System solo durante sessione attiva
     if (charging && txId >= 0) {
         _logger.debug("Forwarding MeterValue %d Wh (txId=%d)", meterValueWh, txId);
         CentralSystemEvent meterEvt;
@@ -229,32 +233,27 @@ void SessionManager::handleMeterValue(int meterValueWh)
 
 void SessionManager::handleError(const std::string& errorType)
 {
-	// Mappa errorType → OCPP errorCode
-	std::string errorCode = "NoError";
-	if (errorType == "HardwareFault")
-		errorCode = "InternalError";
-	else if (errorType == "TamperDetection")
-		errorCode = "OtherError";
-
-    _logger.warning("Hardware error reported: %s (OCPP code: %s)", errorType, errorCode);
+    _logger.debug("Hardware error reported: %s:", errorType);
 
     _status.lastError = errorType;
 
+    // Il cambio stato a Faulted arriverà tramite onConnectorStateChanged
     notifyStatusUpdate();
 }
 
 void SessionManager::handleErrorCleared()
 {
-    _logger.information("Hardware error cleared");
+    _logger.debug("Hardware error cleared");
 
     _status.lastError = "";
 
+    // Il cambio stato ad Available arriverà tramite onConnectorStateChanged
     notifyStatusUpdate();
 }
 
 void SessionManager::handleCentralSystemConnectionChanged(bool connected)
 {
-    _logger.information("Central_System connection status: %s",
+    _logger.debug("Central_System connection status: %s",
                        std::string(connected ? "connected" : "disconnected"));
 
     _status.centralSystemConnected = connected;
@@ -264,7 +263,7 @@ void SessionManager::handleCentralSystemConnectionChanged(bool connected)
 
 void SessionManager::handleFirmwareConnectionChanged(bool connected)
 {
-    _logger.information("Firmware IPC connection status: %s",
+    _logger.debug("Firmware IPC connection status: %s",
                        std::string(connected ? "connected" : "disconnected"));
 
     _status.firmwareConnected = connected;
@@ -280,7 +279,7 @@ void SessionManager::handleRemoteCommand(const std::string& action,
                                          const Poco::JSON::Object& payload,
                                          const std::string& uniqueId)
 {
-    _logger.information("Remote command received: %s", action);
+    _logger.debug("Remote command received: %s", action);
 
     if (action == "RemoteStartTransaction") {
 
@@ -290,6 +289,7 @@ void SessionManager::handleRemoteCommand(const std::string& action,
                 _status.firmwareConnected &&
                 _status.centralSystemConnected)
         {
+        	// Accettare: rispondere Accepted, poi avviare sequenza
             response.set("status", "Accepted");
             CentralSystemEvent acceptedEvt;
             acceptedEvt.type = CentralSystemEvent::Type::CallResult;
@@ -297,10 +297,15 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             acceptedEvt.payload = response;
             _csysQueue->push(std::move(acceptedEvt));
 
+            // Estrarre idTag dal payload
             std::string idTag = payload.optValue<std::string>("idTag", "UNKNOWN");
 
+            // Sequenza: plug_in → authorize → start_charge
             sendIpcCommand("plug_in");
 
+            // Avviare la sequenza Authorize direttamente (il connettore passerà
+            // a Preparing in modo asincrono, ma per il flusso remoto non serve
+            // attendere — il check stato è già stato fatto sopra)
             _awaitingAuthorize = true;
             _pendingIdTag = idTag;
             _pendingMeterStart = _status.currentMeterValue;
@@ -309,7 +314,8 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             authEvt.idTag = idTag;
             _csysQueue->push(std::move(authEvt));
         } else {
-            _logger.warning("RemoteStartTransaction rejected: connector is %s", _status.connectorState);
+        	// Connettore non disponibile → Rejected
+            _logger.debug("RemoteStartTransaction rejected: connector is %s", _status.connectorState);
             response.set("status", "Rejected");
             CentralSystemEvent rejEvt;
             rejEvt.type = CentralSystemEvent::Type::CallResult;
@@ -319,16 +325,14 @@ void SessionManager::handleRemoteCommand(const std::string& action,
         }
 
     } else if (action == "RemoteStopTransaction") {
-        int requestedTxId = -1;
-        if (payload.has("transactionId")) {
-            requestedTxId = payload.getValue<int>("transactionId");
-        }
+    	int requestedTxId = payload.optValue<int>("transactionId", -1);
 
         int currentTxId = _status.transactionId;
 
         Poco::JSON::Object response;
 
         if (requestedTxId >= 0 && requestedTxId == currentTxId) {
+        	// TransactionId corrisponde → Accepted
             response.set("status", "Accepted");
             CentralSystemEvent acceptedEvt;
             acceptedEvt.type = CentralSystemEvent::Type::CallResult;
@@ -336,10 +340,12 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             acceptedEvt.payload = response;
             _csysQueue->push(std::move(acceptedEvt));
 
+            // Arrestare la ricarica: stop_charge → plug_out
             sendIpcCommand("stop_charge");
             sendIpcCommand("plug_out");
         } else {
-            _logger.warning("RemoteStopTransaction rejected: requested txId=%d, current txId=%d",
+        	// TransactionId non corrisponde → Rejected
+            _logger.debug("RemoteStopTransaction rejected: requested txId=%d, current txId=%d",
                            requestedTxId, currentTxId);
             response.set("status", "Rejected");
             CentralSystemEvent rejEvt;
@@ -350,7 +356,7 @@ void SessionManager::handleRemoteCommand(const std::string& action,
         }
 
     } else {
-        _logger.warning("Unknown remote command: %s", action);
+        _logger.debug("Unknown remote command: %s", action);
     }
 }
 
@@ -367,21 +373,23 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
         bool accepted = (bootStatus == "Accepted");
         _status.centralSystemConnected = accepted;
         if (accepted) {
-            _logger.information("Central_System connection confirmed (BootNotification Accepted)");
+            _logger.debug("Central_System connection confirmed (BootNotification Accepted)");
         } else {
-            _logger.warning("BootNotification not accepted: %s", bootStatus);
+            _logger.debug("BootNotification not accepted: %s", bootStatus);
         }
         notifyStatusUpdate();
         return;
     }
 
+    // Gestione Authorize.conf
     if (response.has("idTagInfo") && _awaitingAuthorize) {
         Poco::JSON::Object::Ptr idTagInfo = response.getObject("idTagInfo");
         std::string authStatus = idTagInfo->getValue<std::string>("status");
 
         if (authStatus == "Accepted") {
-            _logger.information("Authorize accepted for idTag: %s", _pendingIdTag);
+            _logger.debug("Authorize accepted for idTag: %s", _pendingIdTag);
 
+            // Procedere con StartTransaction
 			sendIpcCommand("start_charge");
 			CentralSystemEvent startEvt;
 			startEvt.type = CentralSystemEvent::Type::StartTransaction;
@@ -392,19 +400,20 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
 			_status.idTag = _pendingIdTag;
 
         } else {
-            _logger.warning("Authorize rejected for idTag: %s (status: %s)", _pendingIdTag, authStatus);
+        	// Authorize rifiutato → non avviare la ricarica
+            _logger.debug("Authorize rejected for idTag: %s (status: %s)", _pendingIdTag, authStatus);
         }
 
         _awaitingAuthorize = false;
         _pendingIdTag = "";
-        _pendingMeterStart = 0;
         notifyStatusUpdate();
         return;
     }
 
+    // Gestione StartTransaction.conf
     if (action == "StartTransaction" && response.has("transactionId")) {
         int txId = response.getValue<int>("transactionId");
-        _logger.information("StartTransaction confirmed, transactionId=%d", txId);
+        _logger.debug("StartTransaction confirmed, transactionId=%d", txId);
 
         _status.transactionId = txId;
         notifyStatusUpdate();
@@ -418,26 +427,28 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
 
 void SessionManager::handleRequestPlugIn()
 {
-    _logger.information("Web UI: plug_in requested");
+    _logger.debug("Web UI: plug_in requested");
     sendIpcCommand("plug_in");
 }
 
 void SessionManager::handleRequestPlugOut()
 {
-    _logger.information("Web UI: plug_out requested");
+    _logger.debug("Web UI: plug_out requested");
     sendIpcCommand("plug_out");
 }
 
 void SessionManager::handleRequestStartCharge(const std::string& idTag)
 {
-    _logger.information("Start charge requested with idTag: %s", idTag);
+    _logger.debug("Start charge requested with idTag: %s", idTag);
 
+    // Verificare che il connettore sia in stato Preparing prima di procedere
     if (_status.connectorState != "Preparing") {
-    	_logger.warning("Cannot start charge: connector is %s (expected Preparing)",
+    	_logger.debug("Cannot start charge: connector is %s (expected Preparing)",
                            _status.connectorState);
     	return;
     }
 
+    // Authorize prima di StartTransaction
     _awaitingAuthorize = true;
     _pendingIdTag = idTag;
     _pendingMeterStart = _status.currentMeterValue;
@@ -450,19 +461,19 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
 
 void SessionManager::handleRequestStopCharge()
 {
-    _logger.information("Web UI: stop_charge requested");
+    _logger.debug("Web UI: stop_charge requested");
     sendIpcCommand("stop_charge");
 }
 
 void SessionManager::handleRequestTriggerError(const std::string& errorType)
 {
-    _logger.information("Web UI: trigger_error requested (%s)", errorType);
+    _logger.debug("Web UI: trigger_error requested (%s)", errorType);
     sendIpcCommand("trigger_error", errorType);
 }
 
 void SessionManager::handleRequestClearError()
 {
-    _logger.information("Web UI: clear_error requested");
+    _logger.debug("Web UI: clear_error requested");
     sendIpcCommand("clear_error");
 }
 
