@@ -1,0 +1,42 @@
+
+
+   ____   ____      ____ _   _    _    ____   ____ _____ ____  
+  |  _ \ / ___|    / ___| | | |  / \  |  _ \ / ___| ____|  _   
+  | |_) | |  _ ____| |   | |_| | / _ \ | |_) | |  _|  _| | |_) |
+  |  __/| |_| |____| |___|  _  |/ ___ \|  _ <| |_| | |___|  _ < 
+  |_|    \____|     \____|_| |_/_/   \_\_| \_\\____|_____|_| \_ 
+
+            E V   C H A R G E R   S I M U L A T O R
+
+
+2026-04-12 15:59:47.211 [I] [6769] AppMain: charge_point_app running. Press Ctrl+C to stop.
+2026-04-12 15:59:47.222 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-1","BootNotification",{"chargePointModel":"MiniChargePoint","chargePointVendor":"MiniCP"}]
+2026-04-12 15:59:47.253 [I] [2] OcppClient: Received: [3,"MiniCP001-1",{"status":"Accepted","currentTime":"2026-04-12T15:59:47.248Z","interval":14400}]
+2026-04-12 16:00:56.319 [I] [2] OcppClient: Received: [2,"6f037711-5108-4113-ac23-d6c0baf8ff43","RemoteStartTransaction",{"connectorId":1,"idTag":"TESTIDTAG1"}]
+2026-04-12 16:00:56.421 [I] [2] OcppClient: Sending CALLRESULT: [3,"6f037711-5108-4113-ac23-d6c0baf8ff43",{"status":"Accepted"}]
+2026-04-12 16:00:56.530 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-2","StatusNotification",{"connectorId":1,"errorCode":"NoError","status":"Preparing","timestamp":"2026-04-12T16:00:56.530262Z"}]
+2026-04-12 16:00:56.577 [I] [2] OcppClient: Received: [3,"MiniCP001-2",{}]
+2026-04-12 16:00:57.522 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-3","Authorize",{"idTag":"TESTIDTAG1"}]
+2026-04-12 16:00:57.543 [I] [2] OcppClient: Received: [3,"MiniCP001-3",{"idTagInfo":{"status":"Accepted","expiryDate":"2026-04-12T17:00:57.539Z"}}]
+2026-04-12 16:00:57.655 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-4","StartTransaction",{"connectorId":1,"idTag":"TESTIDTAG1","meterStart":0,"timestamp":"2026-04-12T16:00:57.655520Z"}]
+2026-04-12 16:00:57.655 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-5","StatusNotification",{"connectorId":1,"errorCode":"NoError","status":"Charging","timestamp":"2026-04-12T16:00:57.655798Z"}]
+2026-04-12 16:00:57.724 [I] [2] OcppClient: Received: [3,"MiniCP001-4",{"transactionId":38,"idTagInfo":{"status":"Accepted","expiryDate":"2026-04-12T17:00:57.663Z"}}]
+2026-04-12 16:00:57.782 [I] [2] OcppClient: Received: [3,"MiniCP001-5",{}]
+2026-04-12 16:01:07.635 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-6","MeterValues",{"connectorId":1,"meterValue":[{"sampledValue":[{"measurand":"Energy.Active.Import.Register","unit":"Wh","value":"194"}],"timestamp":"2026-04-12T16:01:07.635230Z"}],"transactionId":38}]
+2026-04-12 16:01:07.644 [I] [2] OcppClient: Received: [3,"MiniCP001-6",{}]
+2026-04-12 16:01:17.670 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-7","MeterValues",{"connectorId":1,"meterValue":[{"sampledValue":[{"measurand":"Energy.Active.Import.Register","unit":"Wh","value":"388"}],"timestamp":"2026-04-12T16:01:17.670274Z"}],"transactionId":38}]
+2026-04-12 16:01:17.686 [I] [2] OcppClient: Received: [3,"MiniCP001-7",{}]
+2026-04-12 16:01:27.687 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-8","MeterValues",{"connectorId":1,"meterValue":[{"sampledValue":[{"measurand":"Energy.Active.Import.Register","unit":"Wh","value":"582"}],"timestamp":"2026-04-12T16:01:27.687365Z"}],"transactionId":38}]
+2026-04-12 16:01:27.719 [I] [2] OcppClient: Received: [3,"MiniCP001-8",{}]
+2026-04-12 16:01:37.635 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-9","MeterValues",{"connectorId":1,"meterValue":[{"sampledValue":[{"measurand":"Energy.Active.Import.Register","unit":"Wh","value":"776"}],"timestamp":"2026-04-12T16:01:37.635681Z"}],"transactionId":38}]
+2026-04-12 16:01:37.666 [I] [2] OcppClient: Received: [3,"MiniCP001-9",{}]
+2026-04-12 16:01:47.638 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-10","MeterValues",{"connectorId":1,"meterValue":[{"sampledValue":[{"measurand":"Energy.Active.Import.Register","unit":"Wh","value":"970"}],"timestamp":"2026-04-12T16:01:47.638017Z"}],"transactionId":38}]
+2026-04-12 16:01:47.654 [I] [2] OcppClient: Received: [3,"MiniCP001-10",{}]
+2026-04-12 16:01:57.238 [I] [2] OcppClient: Received: [2,"3d394d5d-e7d8-4312-a74f-5b09190d0b46","RemoteStopTransaction",{"transactionId":38}]
+2026-04-12 16:01:57.499 [I] [2] OcppClient: Sending CALLRESULT: [3,"3d394d5d-e7d8-4312-a74f-5b09190d0b46",{"status":"Accepted"}]
+2026-04-12 16:01:57.501 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-11","StatusNotification",{"connectorId":1,"errorCode":"NoError","status":"Finishing","timestamp":"2026-04-12T16:01:57.500975Z"}]
+2026-04-12 16:01:57.503 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-12","StopTransaction",{"meterStop":970,"reason":"Local","timestamp":"2026-04-12T16:01:57.503151Z","transactionId":38}]
+2026-04-12 16:01:57.512 [I] [2] OcppClient: Received: [3,"MiniCP001-11",{}]
+2026-04-12 16:01:57.523 [I] [2] OcppClient: Received: [3,"MiniCP001-12",{}]
+2026-04-12 16:01:58.543 [I] [2] OcppClient: Sending CALL [2,"MiniCP001-13","StatusNotification",{"connectorId":1,"errorCode":"NoError","status":"Available","timestamp":"2026-04-12T16:01:58.542993Z"}]
+2026-04-12 16:01:58.564 [I] [2] OcppClient: Received: [3,"MiniCP001-13",{}]
