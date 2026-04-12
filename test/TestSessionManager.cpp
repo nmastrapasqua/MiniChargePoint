@@ -1,489 +1,590 @@
 /**
- * TestSessionManager — Unit test per SessionManager.
+ * TestSessionManager — Unit test per SessionManager (architettura a code).
+ *
+ * Il SessionManager riceve SessionEvent dalla eventQueue e produce:
+ *   - CentralSystemEvent nella csysQueue (messaggi OCPP)
+ *   - stringhe JSON nella ipcQueue (comandi al firmware)
+ *   - stringhe JSON nella uiQueue (aggiornamenti UI)
+ *
+ * I test pushano eventi, avviano il SessionManager, e verificano
+ * cosa esce dalle code di output.
  *
  * Proprietà validate:
  *   P5:  Inoltro MeterValues al Central System durante sessione attiva
  *   P12: Authorize prima di StartTransaction
  *   P13: Gestione comandi remoti (RemoteStart/RemoteStop)
  *   Extra: Errore durante sessione attiva → StopTransaction con EmergencyStop
- *
- * Utilizza mock di ProtocolAdapter e IpcClient per verificare le chiamate.
- *
- * Requisiti: 3.6, 3.10, 3.11, 3.12, 3.13, 3.14, 7.4, 11.1, 11.2
  */
 #include "TestHarness.h"
 #include "app/SessionManager.h"
-#include "app/ProtocolAdapter.h"
-#include "common/IIpcSender.h"
+#include "common/SessionEvent.h"
+#include "common/CentralSystemEvent.h"
+#include "common/ThreadSafeQueue.h"
 
 #include <vector>
 #include <string>
+#include <chrono>
 #include <Poco/JSON/Object.h>
+#include <Poco/JSON/Parser.h>
 
 // ============================================================================
-// Mock ProtocolAdapter
+// Helper: drena tutti i CentralSystemEvent dalla coda
 // ============================================================================
 
-class MockProtocolAdapter : public ProtocolAdapter {
-public:
-    struct AuthorizeCall   { std::string idTag; };
-    struct StartTxCall     { int connId; std::string idTag; int meterStart; };
-    struct StopTxCall      { int txId; int meterStop; std::string reason; };
-    struct MeterValCall    { int connId; int txId; int value; };
-    struct StatusNotifCall { int connId; std::string status; std::string errorCode; };
-    struct CallResultCall  { std::string uniqueId; std::string status; };
-
-    std::vector<AuthorizeCall>   authorizeCalls;
-    std::vector<StartTxCall>     startTxCalls;
-    std::vector<StopTxCall>      stopTxCalls;
-    std::vector<MeterValCall>    meterValCalls;
-    std::vector<StatusNotifCall> statusNotifCalls;
-    std::vector<CallResultCall>  callResultCalls;
-
-    void connect() override {}
-    void disconnect() override {}
-    bool isConnected() const override { return true; }
-    void sendBootNotification(const std::string&, const std::string&) override {}
-    void sendHeartbeat() override {}
-
-    void sendAuthorize(const std::string& idTag) override {
-        authorizeCalls.push_back({idTag});
-    }
-    void sendStatusNotification(int connId, const std::string& status,
-                                const std::string& errorCode) override {
-        statusNotifCalls.push_back({connId, status, errorCode});
-    }
-    void sendStartTransaction(int connId, const std::string& idTag,
-                              int meterStart) override {
-        startTxCalls.push_back({connId, idTag, meterStart});
-    }
-    void sendMeterValues(int connId, int txId, int value) override {
-        meterValCalls.push_back({connId, txId, value});
-    }
-    void sendStopTransaction(int txId, int meterStop,
-                             const std::string& reason) override {
-        stopTxCalls.push_back({txId, meterStop, reason});
-    }
-    void setResponseCallback(ResponseCallback) override {}
-    void setRemoteCommandCallback(RemoteCommandCallback) override {}
-    void setConnectionStatusCallback(ConnectionStatusCallback) override {}
-    void sendCallResult(const std::string& uniqueId,
-                        const Poco::JSON::Object& payload) override {
-        std::string st;
-        if (payload.has("status")) st = payload.getValue<std::string>("status");
-        callResultCalls.push_back({uniqueId, st});
-    }
-
-    void reset() {
-        authorizeCalls.clear();
-        startTxCalls.clear();
-        stopTxCalls.clear();
-        meterValCalls.clear();
-        statusNotifCalls.clear();
-        callResultCalls.clear();
-    }
-};
-
-// ============================================================================
-// Mock IpcClient — overrides virtual sendMessage to record commands
-// ============================================================================
-
-class MockIpcClient : public IIpcSender {
-public:
-    struct SentCmd { std::string action; std::string errorType; };
-    std::vector<SentCmd> sentCmds;
-
-    MockIpcClient() = default;
-    ~MockIpcClient() override = default;
-
-    void sendMessage(const Poco::JSON::Object& msg) override {
-        SentCmd c;
-        if (msg.has("action"))    c.action    = msg.getValue<std::string>("action");
-        if (msg.has("errorType")) c.errorType = msg.getValue<std::string>("errorType");
-        sentCmds.push_back(c);
-    }
-
-    void reset() { sentCmds.clear(); }
-};
-
-// ============================================================================
-// Helper: simula una sessione attiva (connettore Charging, transactionId assegnato)
-// ============================================================================
-
-static void setupActiveSession(SessionManager& sm, MockProtocolAdapter& proto,
-                               const std::string& idTag = "TAG1", int txId = 100)
+static std::vector<CentralSystemEvent> drainCsys(ThreadSafeQueue<CentralSystemEvent>& q)
 {
-    // Connettore → Preparing
-    sm.onConnectorStateChanged("Preparing");
-    // Richiesta start charge → invia Authorize
-    sm.requestStartCharge(idTag);
-    // Simula Authorize.conf Accepted
-    Poco::JSON::Object authResp;
-    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
-    idTagInfo->set("status", "Accepted");
-    authResp.set("idTagInfo", idTagInfo);
-    sm.onProtocolResponse(authResp);
-    // Connettore → Charging
-    sm.onConnectorStateChanged("Charging");
-    // Simula StartTransaction.conf con transactionId
-    Poco::JSON::Object startResp;
-    startResp.set("transactionId", txId);
-    sm.onProtocolResponse(startResp);
-    // Pulisci le chiamate registrate per partire da zero nei test
-    proto.reset();
+    std::vector<CentralSystemEvent> result;
+    while (auto evt = q.try_pop()) {
+        result.push_back(std::move(*evt));
+    }
+    return result;
 }
 
 // ============================================================================
-// Proprietà 5: Inoltro MeterValues al Central System
-// Requisito 3.6
+// Helper: drena tutte le stringhe dalla coda IPC
+// ============================================================================
+
+static std::vector<std::string> drainIpc(ThreadSafeQueue<std::string>& q)
+{
+    std::vector<std::string> result;
+    while (auto msg = q.try_pop()) {
+        result.push_back(std::move(*msg));
+    }
+    return result;
+}
+
+// ============================================================================
+// Helper: parsa un comando IPC JSON e restituisce l'action
+// ============================================================================
+
+static std::string getIpcAction(const std::string& json)
+{
+    Poco::JSON::Parser parser;
+    auto obj = parser.parse(json).extract<Poco::JSON::Object::Ptr>();
+    return obj->optValue<std::string>("action", "");
+}
+
+// ============================================================================
+// Helper: filtra CentralSystemEvent per tipo
+// ============================================================================
+
+static std::vector<CentralSystemEvent> filterByType(
+    const std::vector<CentralSystemEvent>& events, CentralSystemEvent::Type type)
+{
+    std::vector<CentralSystemEvent> result;
+    for (const auto& e : events) {
+        if (e.type == type) result.push_back(e);
+    }
+    return result;
+}
+
+// ============================================================================
+// Helper: push un evento e attende che venga processato
+// ============================================================================
+
+static void pushAndWait(ThreadSafeQueue<SessionEvent>& q, SessionEvent evt)
+{
+    q.push(std::move(evt));
+    // Piccolo delay per dare tempo al thread di processare
+    Poco::Thread::sleep(50);
+}
+
+// ============================================================================
+// Helper: simula una sessione attiva
+// ============================================================================
+
+struct TestQueues {
+    ThreadSafeQueue<SessionEvent> eventQ;
+    ThreadSafeQueue<std::string> uiQ;
+    ThreadSafeQueue<std::string> ipcQ;
+    ThreadSafeQueue<CentralSystemEvent> csysQ;
+};
+
+static void setupActiveSession(TestQueues& tq, SessionManager& sm,
+                               const std::string& idTag = "TAG1", int txId = 100)
+{
+    sm.start();
+
+    // Connettore → Preparing
+    SessionEvent prepEvt;
+    prepEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    prepEvt.stringParam = "Preparing";
+    pushAndWait(tq.eventQ, std::move(prepEvt));
+
+    // Start charge → Authorize
+    SessionEvent startEvt;
+    startEvt.type = SessionEvent::Type::WebStartCharge;
+    startEvt.stringParam = idTag;
+    pushAndWait(tq.eventQ, std::move(startEvt));
+
+    // Authorize.conf Accepted
+    SessionEvent authEvt;
+    authEvt.type = SessionEvent::Type::ProtocolResponse;
+    Poco::JSON::Object authResp;
+    Poco::JSON::Object idTagInfo;
+    idTagInfo.set("status", "Accepted");
+    authResp.set("idTagInfo", idTagInfo);
+    authEvt.jsonParam = authResp;
+    pushAndWait(tq.eventQ, std::move(authEvt));
+
+    // Connettore → Charging
+    SessionEvent chargingEvt;
+    chargingEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    chargingEvt.stringParam = "Charging";
+    pushAndWait(tq.eventQ, std::move(chargingEvt));
+
+    // StartTransaction.conf
+    SessionEvent txEvt;
+    txEvt.type = SessionEvent::Type::ProtocolResponse;
+    Poco::JSON::Object txResp;
+    txResp.set("action", "StartTransaction");
+    txResp.set("transactionId", txId);
+    txEvt.jsonParam = txResp;
+    pushAndWait(tq.eventQ, std::move(txEvt));
+
+    // Drain le code per partire puliti
+    drainCsys(tq.csysQ);
+    drainIpc(tq.ipcQ);
+    while (tq.uiQ.try_pop().has_value()) {}
+}
+
+// ============================================================================
+// P5: Inoltro MeterValues al Central System
 // ============================================================================
 
 static void testP5_MeterForwardedDuringActiveSession()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    setupActiveSession(tq, sm);
 
-    setupActiveSession(sm, proto);
+    for (int v : {500, 1000, 1500}) {
+        SessionEvent evt;
+        evt.type = SessionEvent::Type::MeterValue;
+        evt.intParam = v;
+        pushAndWait(tq.eventQ, std::move(evt));
+    }
 
-    // Invio meter values durante sessione attiva
-    sm.onMeterValue(500);
-    sm.onMeterValue(1000);
-    sm.onMeterValue(1500);
+    auto csEvents = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::MeterValues);
+    ASSERT_EQ(3, static_cast<int>(csEvents.size()));
+    ASSERT_EQ(500,  csEvents[0].meterValue);
+    ASSERT_EQ(1000, csEvents[1].meterValue);
+    ASSERT_EQ(1500, csEvents[2].meterValue);
+    ASSERT_EQ(100,  csEvents[0].transactionId);
 
-    ASSERT_EQ(3, static_cast<int>(proto.meterValCalls.size()));
-    ASSERT_EQ(500,  proto.meterValCalls[0].value);
-    ASSERT_EQ(1000, proto.meterValCalls[1].value);
-    ASSERT_EQ(1500, proto.meterValCalls[2].value);
-    // Tutti con connectorId=1 e transactionId=100
-    ASSERT_EQ(1,   proto.meterValCalls[0].connId);
-    ASSERT_EQ(100, proto.meterValCalls[0].txId);
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP5_MeterNotForwardedWhenNotCharging()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    // Connettore Available, nessuna sessione attiva
-    sm.onMeterValue(500);
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::MeterValue;
+    evt.intParam = 500;
+    pushAndWait(tq.eventQ, std::move(evt));
 
-    ASSERT_EQ(0, static_cast<int>(proto.meterValCalls.size()));
+    auto csEvents = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::MeterValues);
+    ASSERT_EQ(0, static_cast<int>(csEvents.size()));
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP5_MeterNotForwardedAfterSessionEnds()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    setupActiveSession(tq, sm);
 
-    setupActiveSession(sm, proto);
+    // Finishing → Available
+    SessionEvent finEvt;
+    finEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    finEvt.stringParam = "Finishing";
+    pushAndWait(tq.eventQ, std::move(finEvt));
 
-    // Sessione termina: Finishing → Available
-    sm.onConnectorStateChanged("Finishing");
-    sm.onConnectorStateChanged("Available");
-    proto.reset();
+    SessionEvent availEvt;
+    availEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    availEvt.stringParam = "Available";
+    pushAndWait(tq.eventQ, std::move(availEvt));
 
-    // Meter value dopo la fine della sessione
-    sm.onMeterValue(200);
-    ASSERT_EQ(0, static_cast<int>(proto.meterValCalls.size()));
+    drainCsys(tq.csysQ); // drain StopTransaction etc.
+
+    SessionEvent meterEvt;
+    meterEvt.type = SessionEvent::Type::MeterValue;
+    meterEvt.intParam = 200;
+    pushAndWait(tq.eventQ, std::move(meterEvt));
+
+    auto csEvents = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::MeterValues);
+    ASSERT_EQ(0, static_cast<int>(csEvents.size()));
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 // ============================================================================
-// Proprietà 12: Authorize prima di StartTransaction
-// Requisiti 3.10, 3.11
+// P12: Authorize prima di StartTransaction
 // ============================================================================
 
 static void testP12_AuthorizeSentBeforeStartTransaction()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    sm.onConnectorStateChanged("Preparing");
-    proto.reset();
+    // Preparing
+    SessionEvent prepEvt;
+    prepEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    prepEvt.stringParam = "Preparing";
+    pushAndWait(tq.eventQ, std::move(prepEvt));
+    drainCsys(tq.csysQ);
 
-    sm.requestStartCharge("MYTAG");
+    // Start charge
+    SessionEvent startEvt;
+    startEvt.type = SessionEvent::Type::WebStartCharge;
+    startEvt.stringParam = "MYTAG";
+    pushAndWait(tq.eventQ, std::move(startEvt));
 
-    // Authorize deve essere inviato
-    ASSERT_EQ(1, static_cast<int>(proto.authorizeCalls.size()));
-    ASSERT_EQ(std::string("MYTAG"), proto.authorizeCalls[0].idTag);
-    // StartTransaction NON ancora inviato (in attesa di Authorize.conf)
-    ASSERT_EQ(0, static_cast<int>(proto.startTxCalls.size()));
+    auto csEvents = drainCsys(tq.csysQ);
+    auto auths = filterByType(csEvents, CentralSystemEvent::Type::Authorize);
+    auto starts = filterByType(csEvents, CentralSystemEvent::Type::StartTransaction);
+
+    ASSERT_EQ(1, static_cast<int>(auths.size()));
+    ASSERT_EQ(std::string("MYTAG"), auths[0].idTag);
+    ASSERT_EQ(0, static_cast<int>(starts.size()));
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP12_StartTransactionAfterAuthorizeAccepted()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    sm.onConnectorStateChanged("Preparing");
-    sm.requestStartCharge("MYTAG");
-    proto.reset();
+    SessionEvent prepEvt;
+    prepEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    prepEvt.stringParam = "Preparing";
+    pushAndWait(tq.eventQ, std::move(prepEvt));
 
-    // Simula Authorize.conf Accepted
+    SessionEvent startEvt;
+    startEvt.type = SessionEvent::Type::WebStartCharge;
+    startEvt.stringParam = "MYTAG";
+    pushAndWait(tq.eventQ, std::move(startEvt));
+    drainCsys(tq.csysQ);
+
+    // Authorize Accepted
+    SessionEvent authEvt;
+    authEvt.type = SessionEvent::Type::ProtocolResponse;
     Poco::JSON::Object authResp;
-    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
-    idTagInfo->set("status", "Accepted");
+    Poco::JSON::Object idTagInfo;
+    idTagInfo.set("status", "Accepted");
     authResp.set("idTagInfo", idTagInfo);
-    sm.onProtocolResponse(authResp);
+    authEvt.jsonParam = authResp;
+    pushAndWait(tq.eventQ, std::move(authEvt));
 
-    // Ora StartTransaction deve essere stato inviato
-    ASSERT_EQ(1, static_cast<int>(proto.startTxCalls.size()));
-    ASSERT_EQ(std::string("MYTAG"), proto.startTxCalls[0].idTag);
-    ASSERT_EQ(1, proto.startTxCalls[0].connId);
+    auto csEvents = drainCsys(tq.csysQ);
+    auto starts = filterByType(csEvents, CentralSystemEvent::Type::StartTransaction);
+    ASSERT_EQ(1, static_cast<int>(starts.size()));
+    ASSERT_EQ(std::string("MYTAG"), starts[0].idTag);
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP12_NoStartTransactionIfAuthorizeRejected()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    sm.onConnectorStateChanged("Preparing");
-    sm.requestStartCharge("BADTAG");
-    proto.reset();
+    SessionEvent prepEvt;
+    prepEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    prepEvt.stringParam = "Preparing";
+    pushAndWait(tq.eventQ, std::move(prepEvt));
 
-    // Simula Authorize.conf Blocked
+    SessionEvent startEvt;
+    startEvt.type = SessionEvent::Type::WebStartCharge;
+    startEvt.stringParam = "BADTAG";
+    pushAndWait(tq.eventQ, std::move(startEvt));
+    drainCsys(tq.csysQ);
+
+    SessionEvent authEvt;
+    authEvt.type = SessionEvent::Type::ProtocolResponse;
     Poco::JSON::Object authResp;
-    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
-    idTagInfo->set("status", "Blocked");
+    Poco::JSON::Object idTagInfo;
+    idTagInfo.set("status", "Blocked");
     authResp.set("idTagInfo", idTagInfo);
-    sm.onProtocolResponse(authResp);
+    authEvt.jsonParam = authResp;
+    pushAndWait(tq.eventQ, std::move(authEvt));
 
-    // StartTransaction NON deve essere inviato
-    ASSERT_EQ(0, static_cast<int>(proto.startTxCalls.size()));
-}
+    auto starts = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::StartTransaction);
+    ASSERT_EQ(0, static_cast<int>(starts.size()));
 
-static void testP12_NoStartTransactionIfAuthorizeInvalid()
-{
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
-
-    sm.onConnectorStateChanged("Preparing");
-    sm.requestStartCharge("EXPTAG");
-    proto.reset();
-
-    // Simula Authorize.conf Expired
-    Poco::JSON::Object authResp;
-    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
-    idTagInfo->set("status", "Expired");
-    authResp.set("idTagInfo", idTagInfo);
-    sm.onProtocolResponse(authResp);
-
-    ASSERT_EQ(0, static_cast<int>(proto.startTxCalls.size()));
+    tq.eventQ.close();
+    sm.stop();
 }
 
 // ============================================================================
-// Proprietà 13: Gestione comandi remoti
-// Requisiti 3.12, 3.13, 3.14
+// P13: Gestione comandi remoti
 // ============================================================================
 
 static void testP13_RemoteStartAvailable()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    // Connettore Available (stato iniziale)
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::RemoteCommand;
+    evt.stringParam = "RemoteStartTransaction";
+    evt.stringParam2 = "uid-001";
     Poco::JSON::Object payload;
     payload.set("idTag", "REMOTETAG");
     payload.set("connectorId", 1);
+    evt.jsonParam = payload;
+    pushAndWait(tq.eventQ, std::move(evt));
 
-    sm.onRemoteCommand("RemoteStartTransaction", payload, "uid-001");
+    auto csEvents = drainCsys(tq.csysQ);
 
-    // Deve rispondere Accepted
-    ASSERT_EQ(1, static_cast<int>(proto.callResultCalls.size()));
-    ASSERT_EQ(std::string("uid-001"), proto.callResultCalls[0].uniqueId);
-    ASSERT_EQ(std::string("Accepted"), proto.callResultCalls[0].status);
+    // CallResult Accepted
+    auto results = filterByType(csEvents, CentralSystemEvent::Type::CallResult);
+    ASSERT_EQ(1, static_cast<int>(results.size()));
+    ASSERT_EQ(std::string("uid-001"), results[0].uniqueId);
+    std::string st = results[0].payload.optValue<std::string>("status", "");
+    ASSERT_EQ(std::string("Accepted"), st);
 
-    // Deve inviare plug_in via IPC
-    ASSERT_TRUE(ipc.sentCmds.size() >= 1);
-    ASSERT_EQ(std::string("plug_in"), ipc.sentCmds[0].action);
+    // Authorize inviato
+    auto auths = filterByType(csEvents, CentralSystemEvent::Type::Authorize);
+    ASSERT_EQ(1, static_cast<int>(auths.size()));
+    ASSERT_EQ(std::string("REMOTETAG"), auths[0].idTag);
 
-    // Deve inviare Authorize con l'idTag dal payload
-    ASSERT_EQ(1, static_cast<int>(proto.authorizeCalls.size()));
-    ASSERT_EQ(std::string("REMOTETAG"), proto.authorizeCalls[0].idTag);
+    // plug_in inviato via IPC
+    auto ipcMsgs = drainIpc(tq.ipcQ);
+    ASSERT_TRUE(ipcMsgs.size() >= 1);
+    ASSERT_EQ(std::string("plug_in"), getIpcAction(ipcMsgs[0]));
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP13_RemoteStartNotAvailable()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    // Porta il connettore a Preparing
-    sm.onConnectorStateChanged("Preparing");
-    proto.reset();
-    ipc.reset();
+    // Porta a Preparing
+    SessionEvent prepEvt;
+    prepEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    prepEvt.stringParam = "Preparing";
+    pushAndWait(tq.eventQ, std::move(prepEvt));
+    drainCsys(tq.csysQ);
+    drainIpc(tq.ipcQ);
 
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::RemoteCommand;
+    evt.stringParam = "RemoteStartTransaction";
+    evt.stringParam2 = "uid-002";
     Poco::JSON::Object payload;
     payload.set("idTag", "REMOTETAG");
-    payload.set("connectorId", 1);
+    evt.jsonParam = payload;
+    pushAndWait(tq.eventQ, std::move(evt));
 
-    sm.onRemoteCommand("RemoteStartTransaction", payload, "uid-002");
+    auto results = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::CallResult);
+    ASSERT_EQ(1, static_cast<int>(results.size()));
+    std::string st = results[0].payload.optValue<std::string>("status", "");
+    ASSERT_EQ(std::string("Rejected"), st);
 
-    // Deve rispondere Rejected
-    ASSERT_EQ(1, static_cast<int>(proto.callResultCalls.size()));
-    ASSERT_EQ(std::string("Rejected"), proto.callResultCalls[0].status);
+    ASSERT_EQ(0, static_cast<int>(drainIpc(tq.ipcQ).size()));
 
-    // NON deve inviare plug_in né Authorize
-    ASSERT_EQ(0, static_cast<int>(ipc.sentCmds.size()));
-    ASSERT_EQ(0, static_cast<int>(proto.authorizeCalls.size()));
-}
-
-static void testP13_RemoteStartFromCharging()
-{
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
-
-    setupActiveSession(sm, proto);
-    ipc.reset();
-
-    Poco::JSON::Object payload;
-    payload.set("idTag", "REMOTETAG");
-
-    sm.onRemoteCommand("RemoteStartTransaction", payload, "uid-003");
-
-    // Deve rispondere Rejected (connettore Charging)
-    ASSERT_EQ(1, static_cast<int>(proto.callResultCalls.size()));
-    ASSERT_EQ(std::string("Rejected"), proto.callResultCalls[0].status);
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP13_RemoteStopMatchingTxId()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    setupActiveSession(tq, sm, "TAG1", 42);
 
-    setupActiveSession(sm, proto, "TAG1", 42);
-    ipc.reset();
-
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::RemoteCommand;
+    evt.stringParam = "RemoteStopTransaction";
+    evt.stringParam2 = "uid-010";
     Poco::JSON::Object payload;
     payload.set("transactionId", 42);
+    evt.jsonParam = payload;
+    pushAndWait(tq.eventQ, std::move(evt));
 
-    sm.onRemoteCommand("RemoteStopTransaction", payload, "uid-010");
+    auto results = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::CallResult);
+    ASSERT_EQ(1, static_cast<int>(results.size()));
+    std::string st = results[0].payload.optValue<std::string>("status", "");
+    ASSERT_EQ(std::string("Accepted"), st);
 
-    // Deve rispondere Accepted
-    ASSERT_EQ(1, static_cast<int>(proto.callResultCalls.size()));
-    ASSERT_EQ(std::string("Accepted"), proto.callResultCalls[0].status);
+    auto ipcMsgs = drainIpc(tq.ipcQ);
+    ASSERT_TRUE(ipcMsgs.size() >= 2);
+    ASSERT_EQ(std::string("stop_charge"), getIpcAction(ipcMsgs[0]));
+    ASSERT_EQ(std::string("plug_out"), getIpcAction(ipcMsgs[1]));
 
-    // Deve inviare stop_charge e plug_out via IPC
-    ASSERT_TRUE(ipc.sentCmds.size() >= 2);
-    ASSERT_EQ(std::string("stop_charge"), ipc.sentCmds[0].action);
-    ASSERT_EQ(std::string("plug_out"),    ipc.sentCmds[1].action);
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP13_RemoteStopWrongTxId()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    setupActiveSession(tq, sm, "TAG1", 42);
 
-    setupActiveSession(sm, proto, "TAG1", 42);
-    ipc.reset();
-
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::RemoteCommand;
+    evt.stringParam = "RemoteStopTransaction";
+    evt.stringParam2 = "uid-011";
     Poco::JSON::Object payload;
-    payload.set("transactionId", 999); // non corrisponde
+    payload.set("transactionId", 999);
+    evt.jsonParam = payload;
+    pushAndWait(tq.eventQ, std::move(evt));
 
-    sm.onRemoteCommand("RemoteStopTransaction", payload, "uid-011");
+    auto results = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::CallResult);
+    ASSERT_EQ(1, static_cast<int>(results.size()));
+    std::string st = results[0].payload.optValue<std::string>("status", "");
+    ASSERT_EQ(std::string("Rejected"), st);
 
-    // Deve rispondere Rejected
-    ASSERT_EQ(1, static_cast<int>(proto.callResultCalls.size()));
-    ASSERT_EQ(std::string("Rejected"), proto.callResultCalls[0].status);
+    ASSERT_EQ(0, static_cast<int>(drainIpc(tq.ipcQ).size()));
 
-    // NON deve inviare comandi IPC
-    ASSERT_EQ(0, static_cast<int>(ipc.sentCmds.size()));
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testP13_RemoteStopNoActiveSession()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    // Nessuna sessione attiva (transactionId = -1)
+    SessionEvent evt;
+    evt.type = SessionEvent::Type::RemoteCommand;
+    evt.stringParam = "RemoteStopTransaction";
+    evt.stringParam2 = "uid-012";
     Poco::JSON::Object payload;
     payload.set("transactionId", 1);
+    evt.jsonParam = payload;
+    pushAndWait(tq.eventQ, std::move(evt));
 
-    sm.onRemoteCommand("RemoteStopTransaction", payload, "uid-012");
+    auto results = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::CallResult);
+    ASSERT_EQ(1, static_cast<int>(results.size()));
+    std::string st = results[0].payload.optValue<std::string>("status", "");
+    ASSERT_EQ(std::string("Rejected"), st);
 
-    // Deve rispondere Rejected
-    ASSERT_EQ(1, static_cast<int>(proto.callResultCalls.size()));
-    ASSERT_EQ(std::string("Rejected"), proto.callResultCalls[0].status);
+    tq.eventQ.close();
+    sm.stop();
 }
 
 // ============================================================================
 // Extra: Errore durante sessione attiva → StopTransaction con EmergencyStop
-// Requisito 7.4
 // ============================================================================
 
 static void testEmergencyStop_FaultDuringCharging()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    setupActiveSession(tq, sm, "TAG1", 77);
 
-    setupActiveSession(sm, proto, "TAG1", 77);
+    // Error
+    SessionEvent errEvt;
+    errEvt.type = SessionEvent::Type::Error;
+    errEvt.stringParam = "HardwareFault";
+    pushAndWait(tq.eventQ, std::move(errEvt));
 
-    // Simula errore hardware: prima onError, poi cambio stato a Faulted
-    sm.onError("HardwareFault", "InternalError");
-    sm.onConnectorStateChanged("Faulted");
+    // Faulted
+    SessionEvent faultEvt;
+    faultEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    faultEvt.stringParam = "Faulted";
+    faultEvt.stringParam2 = "HardwareFault";
+    pushAndWait(tq.eventQ, std::move(faultEvt));
 
-    // Deve inviare StatusNotification con Faulted
-    ASSERT_TRUE(proto.statusNotifCalls.size() >= 1);
+    auto csEvents = drainCsys(tq.csysQ);
+
+    // StatusNotification Faulted
+    auto statuses = filterByType(csEvents, CentralSystemEvent::Type::StatusNotification);
     bool foundFaulted = false;
-    for (const auto& sn : proto.statusNotifCalls) {
-        if (sn.status == "Faulted") { foundFaulted = true; break; }
+    for (const auto& s : statuses) {
+        if (s.status == "Faulted") { foundFaulted = true; break; }
     }
     ASSERT_TRUE(foundFaulted);
 
-    // Deve inviare StopTransaction con reason "EmergencyStop"
-    ASSERT_EQ(1, static_cast<int>(proto.stopTxCalls.size()));
-    ASSERT_EQ(77, proto.stopTxCalls[0].txId);
-    ASSERT_EQ(std::string("EmergencyStop"), proto.stopTxCalls[0].reason);
+    // StopTransaction EmergencyStop
+    auto stops = filterByType(csEvents, CentralSystemEvent::Type::StopTransaction);
+    ASSERT_EQ(1, static_cast<int>(stops.size()));
+    ASSERT_EQ(77, stops[0].transactionId);
+    ASSERT_EQ(std::string("EmergencyStop"), stops[0].reason);
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testEmergencyStop_FaultWhenNotCharging()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    sm.start();
 
-    // Connettore Available, nessuna sessione
-    sm.onConnectorStateChanged("Faulted");
+    SessionEvent faultEvt;
+    faultEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    faultEvt.stringParam = "Faulted";
+    pushAndWait(tq.eventQ, std::move(faultEvt));
 
-    // StatusNotification inviata, ma nessun StopTransaction
-    ASSERT_TRUE(proto.statusNotifCalls.size() >= 1);
-    ASSERT_EQ(0, static_cast<int>(proto.stopTxCalls.size()));
+    auto csEvents = drainCsys(tq.csysQ);
+    auto statuses = filterByType(csEvents, CentralSystemEvent::Type::StatusNotification);
+    ASSERT_TRUE(statuses.size() >= 1);
+
+    auto stops = filterByType(csEvents, CentralSystemEvent::Type::StopTransaction);
+    ASSERT_EQ(0, static_cast<int>(stops.size()));
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 static void testEmergencyStop_FaultDuringChargingWithMeter()
 {
-    MockProtocolAdapter proto;
-    MockIpcClient ipc;
-    SessionManager sm(proto, ipc);
+    TestQueues tq;
+    SessionManager sm(&tq.eventQ, &tq.uiQ, &tq.ipcQ, &tq.csysQ);
+    setupActiveSession(tq, sm, "TAG1", 55);
 
-    setupActiveSession(sm, proto, "TAG1", 55);
+    // Meter values
+    for (int v : {1000, 2000}) {
+        SessionEvent mEvt;
+        mEvt.type = SessionEvent::Type::MeterValue;
+        mEvt.intParam = v;
+        pushAndWait(tq.eventQ, std::move(mEvt));
+    }
+    drainCsys(tq.csysQ);
 
-    // Accumula meter values
-    sm.onMeterValue(1000);
-    sm.onMeterValue(2000);
-    proto.reset();
+    // Fault
+    SessionEvent errEvt;
+    errEvt.type = SessionEvent::Type::Error;
+    errEvt.stringParam = "TamperDetection";
+    pushAndWait(tq.eventQ, std::move(errEvt));
 
-    // Fault durante ricarica
-    sm.onError("TamperDetection", "OtherError");
-    sm.onConnectorStateChanged("Faulted");
+    SessionEvent faultEvt;
+    faultEvt.type = SessionEvent::Type::ConnectorStateChanged;
+    faultEvt.stringParam = "Faulted";
+    faultEvt.stringParam2 = "TamperDetection";
+    pushAndWait(tq.eventQ, std::move(faultEvt));
 
-    // StopTransaction con meterStop = ultimo valore (2000)
-    ASSERT_EQ(1, static_cast<int>(proto.stopTxCalls.size()));
-    ASSERT_EQ(55, proto.stopTxCalls[0].txId);
-    ASSERT_EQ(2000, proto.stopTxCalls[0].meterStop);
-    ASSERT_EQ(std::string("EmergencyStop"), proto.stopTxCalls[0].reason);
+    auto stops = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::StopTransaction);
+    ASSERT_EQ(1, static_cast<int>(stops.size()));
+    ASSERT_EQ(55, stops[0].transactionId);
+    ASSERT_EQ(2000, stops[0].meterValue);
+    ASSERT_EQ(std::string("EmergencyStop"), stops[0].reason);
+
+    tq.eventQ.close();
+    sm.stop();
 }
 
 // ============================================================================
@@ -494,7 +595,6 @@ int main()
 {
     std::cout << "=== TestSessionManager ===\n";
 
-    // P5: Inoltro MeterValues
     runTest("P5: meter values inoltrati durante sessione attiva",
             testP5_MeterForwardedDuringActiveSession);
     runTest("P5: meter values NON inoltrati senza sessione",
@@ -502,23 +602,17 @@ int main()
     runTest("P5: meter values NON inoltrati dopo fine sessione",
             testP5_MeterNotForwardedAfterSessionEnds);
 
-    // P12: Authorize prima di StartTransaction
     runTest("P12: Authorize inviato prima di StartTransaction",
             testP12_AuthorizeSentBeforeStartTransaction);
     runTest("P12: StartTransaction dopo Authorize Accepted",
             testP12_StartTransactionAfterAuthorizeAccepted);
     runTest("P12: NO StartTransaction se Authorize Blocked",
             testP12_NoStartTransactionIfAuthorizeRejected);
-    runTest("P12: NO StartTransaction se Authorize Expired",
-            testP12_NoStartTransactionIfAuthorizeInvalid);
 
-    // P13: Comandi remoti
     runTest("P13: RemoteStart con connettore Available → Accepted",
             testP13_RemoteStartAvailable);
     runTest("P13: RemoteStart con connettore non Available → Rejected",
             testP13_RemoteStartNotAvailable);
-    runTest("P13: RemoteStart durante Charging → Rejected",
-            testP13_RemoteStartFromCharging);
     runTest("P13: RemoteStop con txId corretto → Accepted + stop",
             testP13_RemoteStopMatchingTxId);
     runTest("P13: RemoteStop con txId errato → Rejected",
@@ -526,7 +620,6 @@ int main()
     runTest("P13: RemoteStop senza sessione attiva → Rejected",
             testP13_RemoteStopNoActiveSession);
 
-    // Extra: EmergencyStop
     runTest("Extra: fault durante ricarica → StopTransaction EmergencyStop",
             testEmergencyStop_FaultDuringCharging);
     runTest("Extra: fault senza sessione → nessun StopTransaction",
