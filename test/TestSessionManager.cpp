@@ -85,8 +85,7 @@ static std::vector<CentralSystemEvent> filterByType(
 static void pushAndWait(ThreadSafeQueue<SessionEvent>& q, SessionEvent evt)
 {
     q.push(std::move(evt));
-    // Piccolo delay per dare tempo al thread di processare
-    Poco::Thread::sleep(50);
+    Poco::Thread::sleep(100);
 }
 
 // ============================================================================
@@ -121,8 +120,8 @@ static void setupActiveSession(TestQueues& tq, SessionManager& sm,
     SessionEvent authEvt;
     authEvt.type = SessionEvent::Type::ProtocolResponse;
     Poco::JSON::Object authResp;
-    Poco::JSON::Object idTagInfo;
-    idTagInfo.set("status", "Accepted");
+    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
+    idTagInfo->set("status", "Accepted");
     authResp.set("idTagInfo", idTagInfo);
     authEvt.jsonParam = authResp;
     pushAndWait(tq.eventQ, std::move(authEvt));
@@ -281,8 +280,8 @@ static void testP12_StartTransactionAfterAuthorizeAccepted()
     SessionEvent authEvt;
     authEvt.type = SessionEvent::Type::ProtocolResponse;
     Poco::JSON::Object authResp;
-    Poco::JSON::Object idTagInfo;
-    idTagInfo.set("status", "Accepted");
+    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
+    idTagInfo->set("status", "Accepted");
     authResp.set("idTagInfo", idTagInfo);
     authEvt.jsonParam = authResp;
     pushAndWait(tq.eventQ, std::move(authEvt));
@@ -316,8 +315,8 @@ static void testP12_NoStartTransactionIfAuthorizeRejected()
     SessionEvent authEvt;
     authEvt.type = SessionEvent::Type::ProtocolResponse;
     Poco::JSON::Object authResp;
-    Poco::JSON::Object idTagInfo;
-    idTagInfo.set("status", "Blocked");
+    Poco::JSON::Object::Ptr idTagInfo = new Poco::JSON::Object;
+    idTagInfo->set("status", "Blocked");
     authResp.set("idTagInfo", idTagInfo);
     authEvt.jsonParam = authResp;
     pushAndWait(tq.eventQ, std::move(authEvt));
