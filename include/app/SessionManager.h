@@ -28,7 +28,6 @@
 #include <Poco/Thread.h>
 #include <Poco/Runnable.h>
 
-using Poco::Logger;
 
 class SessionManager: public Poco::Runnable {
 public:
@@ -82,7 +81,7 @@ private:
 
     Poco::Thread _eventThread;
 
-    Logger& _logger = Logger::get("SessionManager");
+    Poco::Logger& _logger = Poco::Logger::get("SessionManager");
 
     // --- Messaggi ricevuti da ipc ---
     void handleConnectorStateChanged(const std::string& newState, const std::string& errorType);

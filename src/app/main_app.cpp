@@ -138,11 +138,14 @@ int main(int argc, char* argv[])
     // --- Shutdown ---
     logger.information("charge_point_app shutting down...");
     eventQueue.close();
-    ipcQueue.close();
     uiQueue.close();
+    ipcQueue.close();
+    csysQueue.close();
+
     webServer.stop();
     protocol->stop();
     ipcClient.stop();
+    sessionManager.stop();
     logger.information("charge_point_app stopped.");
 
     return 0;

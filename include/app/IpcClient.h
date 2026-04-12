@@ -13,9 +13,6 @@
 #include <string>
 #include <atomic>
 
-using Poco::Logger;
-
-
 class IpcClient : public Poco::Runnable {
 public:
     explicit IpcClient(const std::string& socketPath,
@@ -46,7 +43,7 @@ private:
 
     std::string _buffer;
 
-    Logger& _logger = Logger::get("IpcClient");
+    Poco::Logger& _logger = Poco::Logger::get("IpcClient");
 
     // --- internal ---
     bool tryConnect();

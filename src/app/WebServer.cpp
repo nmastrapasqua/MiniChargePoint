@@ -5,11 +5,6 @@
  *   - Un WebSocketHandler (se la richiesta contiene l'header Upgrade: websocket)
  *   - Un StaticFileHandler (per tutte le altre richieste HTTP)
  *
- * Il WebServer collega il SessionManager al WebSocketBroadcaster tramite
- * la StatusCallback, in modo che ogni cambio di stato venga inviato
- * automaticamente a tutti i browser connessi.
- *
- * Requisiti validati: 6.1, 6.5
  */
 #include "app/WebServer.h"
 #include "app/WebSocketHandler.h"

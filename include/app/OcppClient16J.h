@@ -37,7 +37,6 @@
 #include <Poco/JSON/Object.h>
 #include <Poco/Logger.h>
 
-using Poco::Logger;
 
 class OcppClient16J : public ProtocolAdapter, public Poco::Runnable  {
 public:
@@ -66,7 +65,7 @@ private:
     std::unique_ptr<Poco::Net::WebSocket> _ws;
     std::atomic<bool> _connected{false};
     std::atomic<bool> _running{false};
-    Logger& _logger = Logger::get("OcppClient");
+    Poco::Logger& _logger = Poco::Logger::get("OcppClient");
     // Heartbeat timer
     Poco::Timer _heartbeatTimer;
     bool _heartbeatActive ;
