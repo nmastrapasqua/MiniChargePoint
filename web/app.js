@@ -99,7 +99,7 @@
    *
    * Available:  Plug In, HW Fault, Tamper
    * Preparing:  Plug Out, Start Charge*, HW Fault, Tamper
-   * Charging:   Stop Charge*, HW Fault, Tamper
+   * Charging:   Stop Charge, HW Fault, Tamper
    * Finishing:  Plug Out
    * Faulted:    Clear Error
    * (* = richiede Central System connesso)
@@ -127,9 +127,7 @@
         btnErrTamper.disabled = false;
         break;
       case "Charging":
-        if (csConnected) {
-          btnStopCharge.disabled = false;
-        }
+        btnStopCharge.disabled = false;
         btnErrHw.disabled = false;
         btnErrTamper.disabled = false;
         break;
