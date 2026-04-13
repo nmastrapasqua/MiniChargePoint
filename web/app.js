@@ -92,6 +92,17 @@
     updateButtons(state, !!s.firmwareConnected, csConn);
   }
 
+  function setLoading(btn) {
+    btn.classList.add("loading");
+    btn.disabled = true;
+  }
+
+  function clearAllLoading() {
+    var all = [btnPlugIn, btnPlugOut, btnStartCharge, btnStopCharge,
+               btnErrHw, btnErrTamper, btnClearErr];
+    for (var i = 0; i < all.length; i++) all[i].classList.remove("loading");
+  }
+
   /**
    * Abilita/disabilita i pulsanti in base allo stato del connettore.
    * Firmware disconnesso → tutti disabilitati.
@@ -105,6 +116,7 @@
    * (* = richiede Central System connesso)
    */
   function updateButtons(state, fwConnected, csConnected) {
+    clearAllLoading();
     var all = [btnPlugIn, btnPlugOut, btnStartCharge, btnStopCharge,
                btnErrHw, btnErrTamper, btnClearErr, inputIdTag];
     for (var i = 0; i < all.length; i++) all[i].disabled = true;
@@ -142,25 +154,32 @@
 
   // --- Button handlers ---
   btnPlugIn.addEventListener("click", function () {
+    setLoading(btnPlugIn);
     send({ command: "plug_in" });
   });
   btnPlugOut.addEventListener("click", function () {
+    setLoading(btnPlugOut);
     send({ command: "plug_out" });
   });
   btnStartCharge.addEventListener("click", function () {
     var tag = inputIdTag.value.trim() || "TESTIDTAG1";
+    setLoading(btnStartCharge);
     send({ command: "start_charge", idTag: tag });
   });
   btnStopCharge.addEventListener("click", function () {
+    setLoading(btnStopCharge);
     send({ command: "stop_charge" });
   });
   btnErrHw.addEventListener("click", function () {
+    setLoading(btnErrHw);
     send({ command: "trigger_error", errorType: "HardwareFault" });
   });
   btnErrTamper.addEventListener("click", function () {
+    setLoading(btnErrTamper);
     send({ command: "trigger_error", errorType: "TamperDetection" });
   });
   btnClearErr.addEventListener("click", function () {
+    setLoading(btnClearErr);
     send({ command: "clear_error" });
   });
 
