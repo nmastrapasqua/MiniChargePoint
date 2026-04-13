@@ -92,7 +92,13 @@ void OcppClient16J::run() {
 		// --- CONNECT ---
 		if (!_connected) {
 			if (tryConnect()) {
-				sendBootNotification("MiniChargePoint", "MiniCP");
+				try {
+					sendBootNotification("MiniChargePoint", "MiniCP");
+				} catch (const Poco::Exception& e) {
+					_logger.warning("Receive error on boot notification: %s", e.displayText());
+					handleDisconnect();
+					continue;
+				}
 			} else {
 				std::this_thread::sleep_for(std::chrono::seconds(5));
 				continue;
