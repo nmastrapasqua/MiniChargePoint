@@ -140,6 +140,12 @@ void OcppClient16J::eventLoop() {
 				default:
 					sendHeartbeat();
 				}
+				// Attende un pò prima di inviare il messaggio successivo.
+				// Questo è utile quando SteVe non è reggiungibile e i messaggi
+				// rimangono in coda in attesa di essere inviati. Se
+				// l'invio è troppo veloce SteVe non riesce a gestire correttamente
+				// i passaggi di stato del connettore.
+				std::this_thread::sleep_for(std::chrono::seconds(1));
 			}
 
 			// --- Elabora i messaggi da Central System
