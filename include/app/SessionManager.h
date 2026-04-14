@@ -41,6 +41,7 @@ public:
         bool centralSystemConnected;
         bool firmwareConnected;
         std::string lastError;
+        std::string displayMessage;
     };
 
     SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,

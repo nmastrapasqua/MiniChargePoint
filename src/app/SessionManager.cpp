@@ -48,6 +48,7 @@ SessionManager::SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
     _status.centralSystemConnected = false;
     _status.firmwareConnected = false;
     _status.lastError = "";
+    _status.displayMessage = "Mini Charge Point";
 
     if (!_eventQueue) {
     	throw std::invalid_argument("eventQueue non può essere nullptr");
@@ -168,16 +169,20 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
 
     if (newState == "Charging") {
     	_status.isCharging = true;
+    	_status.displayMessage = "Ricarica in corso";
     } else if (newState == "Available") {
     	_status.isCharging = false;
         _status.currentMeterValue = 0;
         _status.transactionId = -1;
         _status.idTag = "";
         _status.lastError = "";
+        _status.displayMessage = "Mini Charge Point";
     } else if (newState == "Faulted") {
     	_status.isCharging = false;
+    	_status.displayMessage = "ERRORE";
     } else if (newState == "Finishing") {
     	_status.isCharging = false;
+    	_status.displayMessage = "Rimuovi il cavo";
     }
 
     // Invia StatusNotification al Central_System
@@ -195,6 +200,8 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     if (_pendingRemoteStart && newState == "Preparing") {
         _pendingRemoteStart = false;
         _awaitingAuthorize = true;
+        _status.displayMessage = "Autorizzazione...";
+        notifyStatusUpdate();
         if (_remoteDelayMs > 0)
             std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
         CentralSystemEvent authEvt;
@@ -225,13 +232,10 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
         _csysQueue->push(std::move(stopLocalEvt));
     }
 
-    // Se c'è un RemoteStop pendente e siamo in Finishing → plug_out con delay
-    // per dare tempo a SteVe di processare StatusNotification e StopTransaction
+    // Se c'è un RemoteStop pendente e siamo in Finishing → non fare plug_out
+    // automatico, l'utente deve rimuovere il cavo dalla web UI
     if (_pendingRemoteStop && newState == "Finishing") {
         _pendingRemoteStop = false;
-        if (_remoteDelayMs > 0)
-            std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
-        sendIpcCommand("plug_out");
     }
 
     notifyStatusUpdate();
@@ -314,7 +318,7 @@ void SessionManager::handleRemoteCommand(const std::string& action,
 
         if (_status.connectorState == "Available")
         {
-        	// Accettare: rispondere Accepted, poi avviare sequenza
+        	// Accettare: rispondere Accepted
             response.set("status", "Accepted");
             CentralSystemEvent acceptedEvt;
             acceptedEvt.type = CentralSystemEvent::Type::CallResult;
@@ -325,14 +329,13 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             // Estrarre idTag dal payload
             std::string idTag = payload.optValue<std::string>("idTag", "UNKNOWN");
 
-            // Sequenza: plug_in → authorize → start_charge
-            sendIpcCommand("plug_in");
-
-            // L'Authorize verrà inviato quando arriva ConnectorStateChanged Preparing
-            // per garantire che la StatusNotification Preparing arrivi a SteVe prima
+            // Non fare plug_in automatico — l'utente deve inserire il cavo.
+            // Mostra messaggio sul display e attendi Plug In dalla web UI.
             _pendingRemoteStart = true;
             _pendingIdTag = idTag;
             _pendingMeterStart = _status.currentMeterValue;
+            _status.displayMessage = "Inserisci il cavo";
+            notifyStatusUpdate();
         } else {
         	// Connettore non disponibile → Rejected
             _logger.debug("RemoteStartTransaction rejected: connector is %s", _status.connectorState);
@@ -408,6 +411,7 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
 
         if (authStatus == "Accepted") {
             _logger.debug("Authorize accepted for idTag: %s", _pendingIdTag);
+            _status.displayMessage = "Autorizzato";
 
             // Procedere con StartTransaction
 			sendIpcCommand("start_charge");
@@ -422,6 +426,7 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
         } else {
         	// Authorize rifiutato → non avviare la ricarica
             _logger.debug("Authorize rejected for idTag: %s (status: %s)", _pendingIdTag, authStatus);
+            _status.displayMessage = "Autorizzazione fallita";
         }
 
         _awaitingAuthorize = false;
@@ -472,6 +477,8 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
     _awaitingAuthorize = true;
     _pendingIdTag = idTag;
     _pendingMeterStart = _status.currentMeterValue;
+    _status.displayMessage = "Autorizzazione...";
+    notifyStatusUpdate();
 
     CentralSystemEvent authEvt;
     authEvt.type = CentralSystemEvent::Type::Authorize;
@@ -536,6 +543,7 @@ std::string SessionManager::serializeStatus(const ChargePointStatus& status) con
     obj.set("centralSystemConnected", status.centralSystemConnected);
     obj.set("firmwareConnected", status.firmwareConnected);
     obj.set("lastError", status.lastError);
+    obj.set("displayMessage", status.displayMessage);
 
     std::string timestamp = Poco::DateTimeFormatter::format(
         Poco::Timestamp(), Poco::DateTimeFormat::ISO8601_FORMAT);

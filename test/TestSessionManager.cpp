@@ -200,19 +200,26 @@ static void testP13_RemoteStartAvailable() {
     Poco::JSON::Object pl; pl.set("idTag", "REMOTETAG"); pl.set("connectorId", 1);
     e.jsonParam = pl;
     pushAndWait(tq.eventQ, std::move(e));
-    // Simula Preparing dal firmware
-    SessionEvent p; p.type = SessionEvent::Type::ConnectorStateChanged; p.stringParam = "Preparing";
-    pushAndWait(tq.eventQ, std::move(p));
+    // Verifica CallResult Accepted (inviato subito)
     auto cs = drainCsys(tq.csysQ);
     auto results = filterByType(cs, CentralSystemEvent::Type::CallResult);
     ASSERT_EQ(1, (int)results.size());
     ASSERT_EQ(std::string("Accepted"), results[0].payload.optValue<std::string>("status", ""));
-    auto auths = filterByType(cs, CentralSystemEvent::Type::Authorize);
-    ASSERT_EQ(1, (int)auths.size());
-    ASSERT_EQ(std::string("REMOTETAG"), auths[0].idTag);
+    // Nessun plug_in automatico — l'utente deve farlo
+    ASSERT_EQ(0, (int)drainIpc(tq.ipcQ).size());
+    // Simula l'utente che fa Plug In dalla web UI
+    SessionEvent pi; pi.type = SessionEvent::Type::WebPlugIn;
+    pushAndWait(tq.eventQ, std::move(pi));
     auto ipc = drainIpc(tq.ipcQ);
     ASSERT_TRUE(ipc.size() >= 1);
     ASSERT_EQ(std::string("plug_in"), getIpcAction(ipc[0]));
+    // Simula Preparing dal firmware
+    SessionEvent p; p.type = SessionEvent::Type::ConnectorStateChanged; p.stringParam = "Preparing";
+    pushAndWait(tq.eventQ, std::move(p));
+    // Authorize deve essere inviato automaticamente
+    auto auths = filterByType(drainCsys(tq.csysQ), CentralSystemEvent::Type::Authorize);
+    ASSERT_EQ(1, (int)auths.size());
+    ASSERT_EQ(std::string("REMOTETAG"), auths[0].idTag);
     tq.eventQ.close(); sm.stop();
 }
 
@@ -248,9 +255,14 @@ static void testP13_RemoteStopMatching() {
     auto ipc = drainIpc(tq.ipcQ);
     ASSERT_TRUE(ipc.size() >= 1);
     ASSERT_EQ(std::string("stop_charge"), getIpcAction(ipc[0]));
-    // Simula Finishing → plug_out
+    // Simula Finishing — nessun plug_out automatico, l'utente deve farlo
     SessionEvent f; f.type = SessionEvent::Type::ConnectorStateChanged; f.stringParam = "Finishing";
     pushAndWait(tq.eventQ, std::move(f));
+    // Nessun plug_out automatico
+    ASSERT_EQ(0, (int)drainIpc(tq.ipcQ).size());
+    // L'utente fa Plug Out dalla web UI
+    SessionEvent po; po.type = SessionEvent::Type::WebPlugOut;
+    pushAndWait(tq.eventQ, std::move(po));
     ipc = drainIpc(tq.ipcQ);
     ASSERT_TRUE(ipc.size() >= 1);
     ASSERT_EQ(std::string("plug_out"), getIpcAction(ipc[0]));

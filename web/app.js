@@ -19,6 +19,7 @@
   var elIdTag          = document.getElementById("id-tag");
   var elCsStatus       = document.getElementById("cs-status");
   var elFwStatus       = document.getElementById("fw-status");
+  var elLcdDisplay     = document.getElementById("lcd-display");
   var inputIdTag       = document.getElementById("input-idtag");
 
   var btnPlugIn      = document.getElementById("btn-plug-in");
@@ -88,6 +89,8 @@
     var fwConn = !!s.firmwareConnected;
     elFwStatus.textContent = fwConn ? "Connesso" : "Disconnesso";
     elFwStatus.className   = "badge " + (fwConn ? "connected" : "disconnected");
+
+    elLcdDisplay.textContent = s.displayMessage || "";
 
     updateButtons(state, !!s.firmwareConnected, csConn);
   }

@@ -92,6 +92,9 @@ private:
     /// Invia un messaggio CALL e registra il uniqueId come pending.
     void sendCall(const std::string& action, const Poco::JSON::Object& payload);
 
+    /// Invia un messaggio CALLERROR.
+    void sendCallError(const std::string& uniqueId, const std::string& errorCode, const std::string& errorDescription);
+
     /// Invia dati raw sul WebSocket (thread-safe).
     void sendRaw(const std::string& data);
 

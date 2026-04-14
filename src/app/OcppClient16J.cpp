@@ -424,6 +424,21 @@ void OcppClient16J::sendCall(const std::string& action,
     sendRaw(json);
 }
 
+void OcppClient16J::sendCallError(const std::string& uniqueId, const std::string& errorCode, const std::string& errorDescription)
+{
+	OcppMessageSerializer16J::OcppMessage errMsg;
+	errMsg.type = OcppMessageSerializer16J::MessageType::CALLERROR;
+	errMsg.uniqueId = uniqueId;
+	errMsg.errorCode = errorCode;
+	errMsg.errorDescription = errorDescription;
+
+	std::string json = OcppMessageSerializer16J::serialize(errMsg);
+
+	_logger.information("Sending CALLERROR %s", json);
+
+	sendRaw(json);
+}
+
 // ---------------------------------------------------------------------------
 // sendRaw — Invio thread-safe sul WebSocket
 // ---------------------------------------------------------------------------
@@ -532,8 +547,9 @@ void OcppClient16J::handleIncomingCall(const std::string& uniqueId,
     	evt.jsonParam = payload;
     	_eventQueue->push(std::move(evt));
     } else {
-        // Unknown incoming CALL — log and ignore
+        // Azione non implementata → CALLERROR NotImplemented
         _logger.warning("Unhandled incoming CALL action: %s", action);
+        sendCallError(uniqueId, "NotImplemented", "Action not supported: " + action);
     }
 }
 
