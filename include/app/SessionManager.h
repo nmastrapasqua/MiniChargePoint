@@ -88,6 +88,8 @@ private:
 
     Poco::Logger& _logger;
 
+    void transitionTo(const std::string& newState);
+
     // --- Messaggi ricevuti da ipc ---
     void handleConnectorStateChanged(const std::string& newState, const std::string& errorType);
     void handleMeterValue(int meterValueWh);
@@ -119,6 +121,14 @@ private:
 
     std::string serializeStatus(const ChargePointStatus& status) const;
     std::string mapErrorCode(const std::string& connectorState) const;
+
+    // Central System
+    void sendStatusNotification(int connectorId, const std::string& status, const std::string& errorCode);
+    void sendAuthorize(const std::string& idTag);
+    void sendStartTransaction(int connectorId, const std::string& idTag, int meterValue);
+    void sendStopTransaction(int transactionId, int meterValue, const std::string& reason);
+    void sendMeterValues(int connectorId, int transactionId, int meterValue);
+    void sendCallResult(const std::string& uniqueId, const Poco::JSON::Object& payload);
 };
 
 #endif // SESSIONMANAGER_H
