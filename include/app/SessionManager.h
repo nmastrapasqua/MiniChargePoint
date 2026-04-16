@@ -66,10 +66,7 @@ private:
 
     // Accesso solo dal thread di processing
     bool _awaitingAuthorize;
-    std::string _pendingIdTag;
-    int _pendingMeterStart;
     bool _pendingRemoteStart;   // true se in attesa di Preparing per RemoteStart
-    bool _pendingRemoteStop;    // true se in attesa di Finishing per RemoteStop
     int _remoteDelayMs;         // delay per sincronizzazione con SteVe
 
     // --- Coda eventi e thread dedicato ---

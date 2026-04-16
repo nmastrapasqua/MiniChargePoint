@@ -29,10 +29,7 @@ SessionManager::SessionManager(ThreadSafeQueue<SessionEvent>* eventQ,
 		ThreadSafeQueue<CentralSystemEvent>* csysQueue,
 		int remoteDelayMs)
     : _awaitingAuthorize(false)
-	, _pendingIdTag("")
-    , _pendingMeterStart(0)
     , _pendingRemoteStart(false)
-    , _pendingRemoteStop(false)
     , _remoteDelayMs(remoteDelayMs)
 	, _eventQueue(eventQ)
 	, _uiQueue(uiQ)
@@ -183,6 +180,7 @@ void SessionManager::transitionTo(const std::string& newState)
 void SessionManager::handleConnectorStateChanged(const std::string& newState, const std::string& errorType)
 {
     _logger.debug("Connector state changed to: %s", newState);
+    bool wasCharging = _status.isCharging;
     transitionTo(newState);
 
     // Invia StatusNotification al Central_System
@@ -193,7 +191,8 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     // Se c'è un RemoteStart pendente e siamo in Preparing → invia Authorize
     // con delay per dare tempo a SteVe di processare la StatusNotification Preparing
     // _awaitingAuthorize viene impostato a false quando arriva l'esito
-    // dell'autorizzazione dal Central System
+    // dell'autorizzazione dal Central System.
+    // _status.idTag è impostato quando arriva il comando start transaction.
     if (_pendingRemoteStart && newState == "Preparing") {
         _pendingRemoteStart = false;
         _awaitingAuthorize = true;
@@ -201,27 +200,21 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
         notifyStatusUpdate();
         if (_remoteDelayMs > 0)
             std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
-        sendAuthorize(_pendingIdTag);
+        sendAuthorize(_status.idTag);
     }
 
     // Se era in ricarica e il connettore è andato in Faulted → StopTransaction con EmergencyStop
-    if (_status.isCharging && newState == "Faulted" && _status.transactionId >= 0) {
+    if (wasCharging && newState == "Faulted" && _status.transactionId >= 0) {
         _logger.debug("Fault during active session (txId=%d) — sending StopTransaction with EmergencyStop",
         		_status.transactionId);
         sendStopTransaction(_status.transactionId, _status.currentMeterValue, "EmergencyStop");
     }
 
     // Se era in ricarica e il connettore è in Finishing → StopTransaction normale
-    if (_status.isCharging && newState == "Finishing" && _status.transactionId >= 0) {
+    if (wasCharging && newState == "Finishing" && _status.transactionId >= 0) {
         _logger.debug("Charging session ending (txId=%d), sending StopTransaction",
         		_status.transactionId);
         sendStopTransaction(_status.transactionId, _status.currentMeterValue, "Local");
-    }
-
-    // Se c'è un RemoteStop pendente e siamo in Finishing → non fare plug_out
-    // automatico, l'utente deve rimuovere il cavo dalla web UI
-    if (_pendingRemoteStop && newState == "Finishing") {
-        _pendingRemoteStop = false;
     }
 
     notifyStatusUpdate();
@@ -307,10 +300,9 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             // Mostra messaggio sul display e attende Plug In dalla web UI.
             // Dopo il plug-in, il connettore invia il cambio stato -> Preparing
             // gestito in handleConnectorStateChanged (che imposta _pendingRemoteStart = false)
-            // _pendingIdTag viene pulito quando arriva l'esito dell'autorizzazione.
+            // _status.idTag viene pulito quando arriva l'esito dell'autorizzazione.
             _pendingRemoteStart = true;
-            _pendingIdTag = idTag;
-            _pendingMeterStart = _status.currentMeterValue;
+            _status.idTag = idTag;
             _status.displayMessage = "Inserisci il cavo";
             notifyStatusUpdate();
         } else {
@@ -330,7 +322,6 @@ void SessionManager::handleRemoteCommand(const std::string& action,
 
             // Arrestare la ricarica: stop_charge ora, plug_out dopo Finishing
             sendIpcCommand("stop_charge");
-            _pendingRemoteStop = true;
         } else {
         	// TransactionId non corrisponde → Rejected
             _logger.debug("RemoteStopTransaction rejected: requested txId=%d, current txId=%d",
@@ -366,27 +357,28 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
     }
 
     // Gestione Authorize.conf
+    // _status.idTag è impostato quando arriva il comando
+    // start transaction
     if (response.has("idTagInfo") && _awaitingAuthorize) {
         Poco::JSON::Object::Ptr idTagInfo = response.getObject("idTagInfo");
         std::string authStatus = idTagInfo->getValue<std::string>("status");
 
         if (authStatus == "Accepted") {
-            _logger.debug("Authorize accepted for idTag: %s", _pendingIdTag);
+            _logger.debug("Authorize accepted for idTag: %s", _status.idTag);
             _status.displayMessage = "Autorizzato";
 
             // Procedere con StartTransaction
 			sendIpcCommand("start_charge");
-			sendStartTransaction(1, _pendingIdTag, _pendingMeterStart);
-			_status.idTag = _pendingIdTag;
+			sendStartTransaction(1, _status.idTag, 0);
 
         } else {
         	// Authorize rifiutato → non avviare la ricarica
-            _logger.debug("Authorize rejected for idTag: %s (status: %s)", _pendingIdTag, authStatus);
+            _logger.debug("Authorize rejected for idTag: %s (status: %s)", _status.idTag, authStatus);
             _status.displayMessage = "Autorizzazione fallita";
         }
 
         _awaitingAuthorize = false;
-        _pendingIdTag = "";
+        _status.idTag = "";
         notifyStatusUpdate();
         return;
     }
@@ -434,15 +426,14 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
     // Authorize prima di StartTransaction
     // _awaitingAuthorize viene impostato a false quando
     // arriva l'esito dell'autorizzazione.
-    // _pendingIdTag viene pulito quando arriva l'esito
+    // _status.idTag viene pulito quando arriva l'esito
     // dell'autorizzazione
     _awaitingAuthorize = true;
-    _pendingIdTag = idTag;
-    _pendingMeterStart = _status.currentMeterValue;
+    _status.idTag = idTag;
     _status.displayMessage = "Autorizzazione...";
     notifyStatusUpdate();
 
-    sendAuthorize(_pendingIdTag);
+    sendAuthorize(_status.idTag);
 }
 
 void SessionManager::handleRequestStopCharge()
