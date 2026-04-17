@@ -92,7 +92,7 @@
 
     elLcdDisplay.textContent = s.displayMessage || "";
 
-    updateButtons(state, !!s.firmwareConnected, csConn);
+    updateButtons(state, !!s.firmwareConnected, csConn, s.displayMessage || "");
   }
 
   function setLoading(btn) {
@@ -118,13 +118,15 @@
    * Faulted:    Clear Error
    * (* = richiede Central System connesso)
    */
-  function updateButtons(state, fwConnected, csConnected) {
+  function updateButtons(state, fwConnected, csConnected, displayMsg) {
     clearAllLoading();
     var all = [btnPlugIn, btnPlugOut, btnStartCharge, btnStopCharge,
                btnErrHw, btnErrTamper, btnClearErr, inputIdTag];
     for (var i = 0; i < all.length; i++) all[i].disabled = true;
 
     if (!fwConnected) return;
+
+    var authorizing = (displayMsg === "Autorizzazione..." || displayMsg === "Autorizzato");
 
     switch (state) {
       case "Available":
@@ -134,7 +136,7 @@
         break;
       case "Preparing":
         btnPlugOut.disabled = false;
-        if (csConnected) {
+        if (csConnected && !authorizing) {
           btnStartCharge.disabled = false;
           inputIdTag.disabled = false;
         }
@@ -187,6 +189,6 @@
   });
 
   // --- Init ---
-  updateButtons("Available");
+  updateButtons("Available", false, false, "");
   connect();
 })();

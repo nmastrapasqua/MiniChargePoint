@@ -433,6 +433,10 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
     _status.displayMessage = "Autorizzazione...";
     notifyStatusUpdate();
 
+    // Piccolo delay per mostrare il messaggio
+    // sul display
+    if (_remoteDelayMs > 0)
+    	std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
     sendAuthorize(_status.idTag);
 }
 
