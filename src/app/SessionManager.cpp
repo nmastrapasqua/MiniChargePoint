@@ -189,7 +189,7 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     sendStatusNotification(1, newState, errorCode);
 
     // Se c'è un RemoteStart pendente e siamo in Preparing → invia Authorize
-    // con delay per dare tempo a SteVe di processare la StatusNotification Preparing
+    // (con piccolo delay per visualizzare il messaggio sul display)
     // _awaitingAuthorize viene impostato a false quando arriva l'esito
     // dell'autorizzazione dal Central System.
     // _status.idTag è impostato quando arriva il comando start transaction.
