@@ -300,7 +300,7 @@ void SessionManager::handleRemoteCommand(const std::string& action,
             // Mostra messaggio sul display e attende Plug In dalla web UI.
             // Dopo il plug-in, il connettore invia il cambio stato -> Preparing
             // gestito in handleConnectorStateChanged (che imposta _pendingRemoteStart = false)
-            // _status.idTag viene pulito quando arriva l'esito dell'autorizzazione.
+            // _status.idTag viene pulito quando arriva lo stato Available.
             _pendingRemoteStart = true;
             _status.idTag = idTag;
             _status.displayMessage = "Inserisci il cavo";
@@ -378,7 +378,6 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
         }
 
         _awaitingAuthorize = false;
-        _status.idTag = "";
         notifyStatusUpdate();
         return;
     }
@@ -426,8 +425,8 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
     // Authorize prima di StartTransaction
     // _awaitingAuthorize viene impostato a false quando
     // arriva l'esito dell'autorizzazione.
-    // _status.idTag viene pulito quando arriva l'esito
-    // dell'autorizzazione
+    // _status.idTag viene pulito quando arriva lo
+    // stato Availbale
     _awaitingAuthorize = true;
     _status.idTag = idTag;
     _status.displayMessage = "Autorizzazione...";
