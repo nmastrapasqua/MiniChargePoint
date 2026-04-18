@@ -192,7 +192,7 @@ void SessionManager::handleConnectorStateChanged(const std::string& newState, co
     // (con piccolo delay per visualizzare il messaggio sul display)
     // _awaitingAuthorize viene impostato a false quando arriva l'esito
     // dell'autorizzazione dal Central System.
-    // _status.idTag è impostato quando arriva il comando start transaction.
+    // _status.idTag è impostato quando arriva il RemoteStart o lo StartCharge locale.
     if (_pendingRemoteStart && newState == "Preparing") {
         _pendingRemoteStart = false;
         _awaitingAuthorize = true;
@@ -357,8 +357,7 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
     }
 
     // Gestione Authorize.conf
-    // _status.idTag è impostato quando arriva il comando
-    // start transaction
+    // _status.idTag è impostato quando arriva il RemoteStart o lo StartCharge local
     if (response.has("idTagInfo") && _awaitingAuthorize) {
         Poco::JSON::Object::Ptr idTagInfo = response.getObject("idTagInfo");
         std::string authStatus = idTagInfo->getValue<std::string>("status");
@@ -430,7 +429,7 @@ void SessionManager::handleRequestStartCharge(const std::string& idTag)
     // _awaitingAuthorize viene impostato a false quando
     // arriva l'esito dell'autorizzazione.
     // _status.idTag viene pulito quando arriva lo
-    // stato Availbale
+    // stato Available
     _awaitingAuthorize = true;
     _status.idTag = idTag;
     _status.displayMessage = "Autorizzazione...";

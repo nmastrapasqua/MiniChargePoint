@@ -67,7 +67,7 @@ private:
     // Accesso solo dal thread di processing
     bool _awaitingAuthorize;
     bool _pendingRemoteStart;   // true se in attesa di Preparing per RemoteStart
-    int _remoteDelayMs;         // delay per sincronizzazione con SteVe
+    int _remoteDelayMs;         // delay per visualizzazione messaggi display e sincronizzazione con SteVe
 
     // --- Coda eventi e thread dedicato ---
     ThreadSafeQueue<SessionEvent>* _eventQueue = nullptr;
