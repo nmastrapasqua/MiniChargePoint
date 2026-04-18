@@ -366,6 +366,10 @@ void SessionManager::handleProtocolResponse(const Poco::JSON::Object& response)
         if (authStatus == "Accepted") {
             _logger.debug("Authorize accepted for idTag: %s", _status.idTag);
             _status.displayMessage = "Autorizzato";
+            notifyStatusUpdate();
+            // Attende un pò per visualizzare il messaggio nel display
+            if (_remoteDelayMs > 0)
+            	std::this_thread::sleep_for(std::chrono::milliseconds(_remoteDelayMs));
 
             // Procedere con StartTransaction
 			sendIpcCommand("start_charge");

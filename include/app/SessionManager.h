@@ -48,7 +48,7 @@ public:
 			ThreadSafeQueue<std::string>* uiQ,
 			ThreadSafeQueue<std::string>* ipcQ,
 			ThreadSafeQueue<CentralSystemEvent>* csysQueue,
-			int remoteDelayMs = 1000);
+			int remoteDelayMs = 2000);
 
     ~SessionManager();
 
